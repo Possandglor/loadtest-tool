@@ -1,19 +1,25 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Load Test Tool</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            margin: 0; 
-            background: #1a1a1a; 
-            color: #ffffff; 
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            background: #1a1a1a;
+            color: #ffffff;
         }
-        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
-        
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
         /* Tabs */
         .tabs {
             display: flex;
@@ -21,6 +27,7 @@
             border-bottom: 2px solid #404040;
             margin-bottom: 20px;
         }
+
         .tab {
             padding: 12px 24px;
             background: #2d2d2d;
@@ -31,78 +38,198 @@
             font-size: 16px;
             transition: all 0.3s;
         }
+
         .tab:hover {
             background: #3a3a3a;
             color: #fff;
         }
+
         .tab.active {
             background: #4a9eff;
             color: #fff;
         }
+
         .tab-content {
             display: none;
         }
+
         .tab-content.active {
             display: block;
         }
-        
+
         .main-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 20px;
             margin-bottom: 20px;
         }
+
         .full-width {
             grid-column: 1 / -1;
         }
+
         @media (max-width: 1200px) {
             .main-grid {
                 grid-template-columns: 1fr;
             }
         }
-        .section { 
-            margin-bottom: 30px; 
-            padding: 20px; 
-            border: 1px solid #404040; 
-            border-radius: 8px; 
+
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #404040;
+            border-radius: 8px;
             background: #2d2d2d;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
         }
-        .form-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input, select, textarea { 
-            width: 100%; 
-            padding: 8px; 
-            border: 1px solid #404040; 
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        input,
+        select,
+        textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #404040;
             border-radius: 3px;
             background: #3a3a3a;
             color: #ffffff;
         }
-        button { padding: 10px 20px; margin: 5px; border: none; border-radius: 3px; cursor: pointer; }
-        .btn-primary { background: #4a9eff; color: white; }
-        .btn-success { background: #4caf50; color: white; }
-        .btn-danger { background: #f44336; color: white; }
-        .btn-secondary { background: #6c757d; color: white; }
-        .charts { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
-        .chart-container { height: 300px; }
-        .config-list { max-height: 500px; overflow-y: auto; }
-        .config-item { padding: 10px; border: 1px solid #404040; margin-bottom: 10px; border-radius: 3px; position: relative; background: #3a3a3a; }
-        .config-item:hover { background: #454545; }
-        .status { padding: 5px 10px; border-radius: 3px; color: white; font-size: 12px; }
-        .status.running { background: #28a745; }
-        .status.stopped { background: #dc3545; }
-        .metrics-table { width: 100%; border-collapse: collapse; }
-        .metrics-table th, .metrics-table td { padding: 8px; border: 1px solid #404040; text-align: left; }
-        .metrics-table th { background: #3a3a3a; }
-        .rps-steps { background: #3a3a3a; padding: 15px; border-radius: 5px; margin-top: 10px; }
-        .rps-step { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
-        .rps-step input { width: 100px; }
-        .btn-small { padding: 5px 10px; font-size: 12px; }
-        .config-actions { position: absolute; top: 10px; right: 10px; }
-        .hidden { display: none; }
-        
+
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        .btn-primary {
+            background: #4a9eff;
+            color: white;
+        }
+
+        .btn-success {
+            background: #4caf50;
+            color: white;
+        }
+
+        .btn-danger {
+            background: #f44336;
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .charts {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+        }
+
+        .chart-container {
+            height: 300px;
+        }
+
+        .config-list {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .config-item {
+            padding: 10px;
+            border: 1px solid #404040;
+            margin-bottom: 10px;
+            border-radius: 3px;
+            position: relative;
+            background: #3a3a3a;
+        }
+
+        .config-item:hover {
+            background: #454545;
+        }
+
+        .status {
+            padding: 5px 10px;
+            border-radius: 3px;
+            color: white;
+            font-size: 12px;
+        }
+
+        .status.running {
+            background: #28a745;
+        }
+
+        .status.stopped {
+            background: #dc3545;
+        }
+
+        .metrics-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .metrics-table th,
+        .metrics-table td {
+            padding: 8px;
+            border: 1px solid #404040;
+            text-align: left;
+        }
+
+        .metrics-table th {
+            background: #3a3a3a;
+        }
+
+        .rps-steps {
+            background: #3a3a3a;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+
+        .rps-step {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+
+        .rps-step input {
+            width: 100px;
+        }
+
+        .btn-small {
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+
+        .config-actions {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
         /* History */
-        .history-list { max-height: 600px; overflow-y: auto; }
+        .history-list {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
         .history-item {
             padding: 15px;
             border: 1px solid #404040;
@@ -112,16 +239,19 @@
             cursor: pointer;
             transition: all 0.3s;
         }
+
         .history-item:hover {
             background: #454545;
             border-color: #4a9eff;
         }
+
         .history-item.selected {
             border-color: #4a9eff;
             background: #3a4a5a;
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <h1>🚀 Load Test Tool</h1>
@@ -138,125 +268,139 @@
             <div class="main-grid">
                 <!-- Конфигурация тестов -->
                 <div class="section">
-                <h2>⚙️ Test Configuration</h2>
-                <form id="configForm">
-                    <div class="form-group">
-                        <label>Test Name:</label>
-                        <input type="text" id="testName" required>
-                    </div>
-                    <div class="form-group">
-                        <label>URL:</label>
-                        <input type="url" id="testUrl" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Method:</label>
-                        <select id="testMethod">
-                            <option value="GET">GET</option>
-                            <option value="POST">POST</option>
-                            <option value="PUT">PUT</option>
-                            <option value="DELETE">DELETE</option>
-                            <option value="PATCH">PATCH</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Headers (JSON) - Use &#123;&#123;sid&#125;&#125; or &#123;&#123;token&#125;&#125; for dynamic values:</label>
-                        <textarea id="testHeaders" placeholder='{"Content-Type": "application/json", "Authorization": "Bearer &#123;&#123;sid&#125;&#125;"}'></textarea>
-                    </div>
-                    <div class="form-group">
-                        <label>Body (supports dynamic functions):</label>
-                        <textarea id="testBody" placeholder='&#123;&#123;randomJson:{"test":"1","type":"A"},{"test":"2","type":"B"}&#125;&#125;'></textarea>
-                        <small style="color: #666;">
-                            Dynamic functions: &#123;&#123;random:val1,val2,val3&#125;&#125;, &#123;&#123;randomJson:{"key":"val1"},{"key":"val2"}&#125;&#125;, &#123;&#123;randomInt:min,max&#125;&#125;, &#123;&#123;uuid&#125;&#125;, &#123;&#123;timestamp&#125;&#125;, &#123;&#123;randomString:length&#125;&#125;, &#123;&#123;randomEmail&#125;&#125;
-                        </small>
-                    </div>
-                    <div class="form-group">
-                        <label>RPS (1-150):</label>
-                        <input type="number" id="testRps" min="1" max="150" value="10" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Duration (seconds):</label>
-                        <input type="number" id="testDuration" min="1" value="60" required>
-                    </div>
-                    
-                    <!-- Динамический RPS -->
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="useDynamicRPS"> Use Dynamic RPS Steps
-                        </label>
-                    </div>
-                    <div id="rpsStepsConfig" class="rps-steps" style="display: none;">
-                        <label>RPS Steps (RPS, Duration in seconds):</label>
-                        <div id="rpsStepsList">
-                            <div class="rps-step">
-                                <input type="number" placeholder="RPS" min="1" class="rps-value">
-                                <input type="number" placeholder="Duration (sec)" min="1" class="rps-duration">
-                                <button type="button" class="btn-danger btn-small" onclick="removeRPSStep(this)">Remove</button>
-                            </div>
-                        </div>
-                        <button type="button" class="btn-secondary btn-small" onclick="addRPSStep()">Add Step</button>
-                    </div>
-                    
-                    <!-- Конфигурация токенов -->
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="useToken"> Use Dynamic Token
-                        </label>
-                    </div>
-                    <div id="tokenConfig" class="token-config" style="display: none;">
+                    <h2>⚙️ Test Configuration</h2>
+                    <form id="configForm">
                         <div class="form-group">
-                            <label>Token API URL:</label>
-                            <input type="url" id="tokenUrl">
+                            <label>Test Name:</label>
+                            <input type="text" id="testName" required>
                         </div>
                         <div class="form-group">
-                            <label>Token Method:</label>
-                            <select id="tokenMethod">
+                            <label>URL:</label>
+                            <input type="url" id="testUrl" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Method:</label>
+                            <select id="testMethod">
                                 <option value="GET">GET</option>
                                 <option value="POST">POST</option>
+                                <option value="PUT">PUT</option>
+                                <option value="DELETE">DELETE</option>
+                                <option value="PATCH">PATCH</option>
                             </select>
                         </div>
                         <div class="form-group">
-                            <label>Token Headers (JSON):</label>
-                            <textarea id="tokenHeaders" placeholder='{"Content-Type": "application/json"}'></textarea>
+                            <label>Headers (JSON) - Use &#123;&#123;sid&#125;&#125; or &#123;&#123;token&#125;&#125; for
+                                dynamic values:</label>
+                            <textarea id="testHeaders"
+                                placeholder='{"Content-Type": "application/json", "Authorization": "Bearer &#123;&#123;sid&#125;&#125;"}'></textarea>
                         </div>
                         <div class="form-group">
-                            <label>Token Body:</label>
-                            <textarea id="tokenBody"></textarea>
+                            <label>Body (supports dynamic functions):</label>
+                            <textarea id="testBody"
+                                placeholder='&#123;&#123;randomJson:{"test":"1","type":"A"},{"test":"2","type":"B"}&#125;&#125;'></textarea>
+                            <small style="color: #666;">
+                                Dynamic functions: &#123;&#123;random:val1,val2,val3&#125;&#125;,
+                                &#123;&#123;randomJson:{"key":"val1"},{"key":"val2"}&#125;&#125;,
+                                &#123;&#123;randomInt:min,max&#125;&#125;, &#123;&#123;uuid&#125;&#125;,
+                                &#123;&#123;timestamp&#125;&#125;, &#123;&#123;randomString:length&#125;&#125;,
+                                &#123;&#123;randomEmail&#125;&#125;
+                            </small>
                         </div>
                         <div class="form-group">
-                            <label>Token JSON Path:</label>
-                            <input type="text" id="tokenPath" placeholder="access_token or data.token">
+                            <label>RPS (1-150):</label>
+                            <input type="number" id="testRps" min="1" max="150" value="10" required>
                         </div>
                         <div class="form-group">
-                            <label>Header Name for Token:</label>
-                            <input type="text" id="tokenHeaderName" placeholder="Authorization">
+                            <label>Duration (seconds):</label>
+                            <input type="number" id="testDuration" min="1" value="60" required>
                         </div>
-                        <div class="form-group">
-                            <label>Cache TTL (seconds):</label>
-                            <input type="number" id="tokenTtl" value="60">
-                        </div>
-                    </div>
 
-                    <button type="submit" class="btn-primary" id="saveBtn">💾 Save Configuration</button>
-                    <button type="button" class="btn-secondary" id="cancelEditBtn" onclick="cancelEdit()" style="display: none;">❌ Cancel Edit</button>
-                    <button type="button" class="btn-secondary" onclick="exportConfigs()">📤 Export All</button>
-                    <input type="file" id="importFile" accept=".json" style="display: none;" onchange="importConfigs()">
-                    <button type="button" class="btn-secondary" onclick="document.getElementById('importFile').click()">📥 Import</button>
-                </form>
-            </div>
+                        <!-- Динамический RPS -->
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="useDynamicRPS"> Use Dynamic RPS Steps
+                            </label>
+                        </div>
+                        <div id="rpsStepsConfig" class="rps-steps" style="display: none;">
+                            <label>RPS Steps (RPS, Duration in seconds):</label>
+                            <div id="rpsStepsList">
+                                <div class="rps-step">
+                                    <input type="number" placeholder="RPS" min="1" class="rps-value">
+                                    <input type="number" placeholder="Duration (sec)" min="1" class="rps-duration">
+                                    <button type="button" class="btn-danger btn-small"
+                                        onclick="removeRPSStep(this)">Remove</button>
+                                </div>
+                            </div>
+                            <button type="button" class="btn-secondary btn-small" onclick="addRPSStep()">Add
+                                Step</button>
+                        </div>
 
-            <!-- Список конфигураций -->
-            <div class="section">
-                <h2>📋 Saved Configurations</h2>
-                <div id="configList" class="config-list"></div>
+                        <!-- Конфигурация токенов -->
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="useToken"> Use Dynamic Token
+                            </label>
+                        </div>
+                        <div id="tokenConfig" class="token-config" style="display: none;">
+                            <div class="form-group">
+                                <label>Token API URL:</label>
+                                <input type="url" id="tokenUrl">
+                            </div>
+                            <div class="form-group">
+                                <label>Token Method:</label>
+                                <select id="tokenMethod">
+                                    <option value="GET">GET</option>
+                                    <option value="POST">POST</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Token Headers (JSON):</label>
+                                <textarea id="tokenHeaders"
+                                    placeholder='{"Content-Type": "application/json"}'></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Token Body:</label>
+                                <textarea id="tokenBody"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Token JSON Path:</label>
+                                <input type="text" id="tokenPath" placeholder="access_token or data.token">
+                            </div>
+                            <div class="form-group">
+                                <label>Header Name for Token:</label>
+                                <input type="text" id="tokenHeaderName" placeholder="Authorization">
+                            </div>
+                            <div class="form-group">
+                                <label>Cache TTL (seconds):</label>
+                                <input type="number" id="tokenTtl" value="60">
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn-primary" id="saveBtn">💾 Save Configuration</button>
+                        <button type="button" class="btn-secondary" id="cancelEditBtn" onclick="cancelEdit()"
+                            style="display: none;">❌ Cancel Edit</button>
+                        <button type="button" class="btn-secondary" onclick="exportConfigs()">📤 Export All</button>
+                        <input type="file" id="importFile" accept=".json" style="display: none;"
+                            onchange="importConfigs()">
+                        <button type="button" class="btn-secondary"
+                            onclick="document.getElementById('importFile').click()">📥 Import</button>
+                    </form>
+                </div>
+
+                <!-- Список конфигураций -->
+                <div class="section">
+                    <h2>📋 Saved Configurations</h2>
+                    <div id="configList" class="config-list"></div>
+                </div>
             </div>
-        </div>
         </div>
 
         <!-- Tab: Live Monitor -->
         <div id="monitorTab" class="tab-content">
             <h2>📊 Real-time Metrics</h2>
-            <div id="activeTestIndicator" style="background: #3a3a3a; padding: 10px; border-radius: 5px; margin-bottom: 15px; display: none;">
-                <strong style="color: #4caf50;">🟢 Active Test:</strong> 
+            <div id="activeTestIndicator"
+                style="background: #3a3a3a; padding: 10px; border-radius: 5px; margin-bottom: 15px; display: none;">
+                <strong style="color: #4caf50;">🟢 Active Test:</strong>
                 <span id="activeTestName" style="color: #4a9eff;"></span>
                 <button class="btn-danger btn-small" onclick="stopTest()" style="float: right;">⏹️ Stop Test</button>
             </div>
@@ -271,26 +415,26 @@
                     <canvas id="statusCodesChart"></canvas>
                 </div>
             </div>
-        </div>
 
-        <!-- Таблица результатов - полная ширина -->
-        <div class="section full-width">
-            <h2>📈 Current Metrics</h2>
-            <table class="metrics-table">
-                <thead>
-                    <tr>
-                        <th>Timestamp</th>
-                        <th>RPS</th>
-                        <th>Avg Response Time (ms)</th>
-                        <th>Error Rate (%)</th>
-                        <th>Status Codes</th>
-                        <th>Last Error</th>
-                    </tr>
-                </thead>
-                <tbody id="metricsTable">
-                </tbody>
-            </table>
-        </div>
+
+            <!-- Таблица результатов - полная ширина -->
+            <div class="section full-width">
+                <h2>📈 Current Metrics</h2>
+                <table class="metrics-table">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>RPS</th>
+                            <th>Avg Response Time (ms)</th>
+                            <th>Error Rate (%)</th>
+                            <th>Status Codes</th>
+                            <th>Last Error</th>
+                        </tr>
+                    </thead>
+                    <tbody id="metricsTable">
+                    </tbody>
+                </table>
+            </div>
         </div>
 
         <!-- Tab: History -->
@@ -302,7 +446,7 @@
                         <p style="color: #888;">Select a test configuration to view its history...</p>
                     </div>
                 </div>
-                
+
                 <div class="section">
                     <h2>📊 Session Details</h2>
                     <div id="sessionDetails" style="color: #888;">
@@ -310,7 +454,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <div class="section full-width">
                 <h2>📈 Historical Metrics</h2>
                 <div class="charts">
@@ -325,7 +469,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <div class="section full-width">
                 <h2>📋 Historical Data</h2>
                 <table class="metrics-table">
@@ -354,18 +498,18 @@
         let selectedTestId = null;
 
         // Инициализация
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', function () {
             initWebSocket();
             initCharts();
             initHistoryCharts();
             loadConfigs();
             loadTestHistory();
-            
-            document.getElementById('useToken').addEventListener('change', function() {
+
+            document.getElementById('useToken').addEventListener('change', function () {
                 document.getElementById('tokenConfig').style.display = this.checked ? 'block' : 'none';
             });
 
-            document.getElementById('useDynamicRPS').addEventListener('change', function() {
+            document.getElementById('useDynamicRPS').addEventListener('change', function () {
                 document.getElementById('rpsStepsConfig').style.display = this.checked ? 'block' : 'none';
                 document.getElementById('testRps').disabled = this.checked;
                 document.getElementById('testDuration').disabled = this.checked;
@@ -382,16 +526,16 @@
             document.querySelectorAll('.tab').forEach(tab => {
                 tab.classList.remove('active');
             });
-            
+
             // Show selected tab
             document.getElementById(tabName + 'Tab').classList.add('active');
-            
+
             // Activate clicked tab button
             const tabs = document.querySelectorAll('.tab');
             if (tabName === 'config') tabs[0].classList.add('active');
             if (tabName === 'monitor') tabs[1].classList.add('active');
             if (tabName === 'history') tabs[2].classList.add('active');
-            
+
             // Load data if needed
             if (tabName === 'history') {
                 loadTestHistory();
@@ -401,8 +545,8 @@
         function initWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-            
-            ws.onmessage = function(event) {
+
+            ws.onmessage = function (event) {
                 const message = JSON.parse(event.data);
                 if (message.type === 'metrics') {
                     updateMetrics(message.data);
@@ -532,15 +676,15 @@
             try {
                 const response = await fetch('/api/configs');
                 const configs = await response.json();
-                
+
                 const list = document.getElementById('historyList');
                 list.innerHTML = '';
-                
+
                 configs.forEach(config => {
                     const div = document.createElement('div');
                     div.className = 'history-item';
                     div.onclick = () => loadTestResults(config.id, config.name);
-                    
+
                     div.innerHTML = `
                         <strong>${config.name}</strong><br>
                         <small style="color: #888;">${config.method} ${config.url}</small><br>
@@ -555,66 +699,66 @@
 
         async function loadTestResults(testId, testName) {
             selectedTestId = testId;
-            
+
             // Highlight selected
             document.querySelectorAll('.history-item').forEach(item => {
                 item.classList.remove('selected');
             });
             event.target.closest('.history-item').classList.add('selected');
-            
+
             try {
                 // Load results from last 7 days
                 const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
                 const response = await fetch(`/api/results/${testId}?since=${since}`);
                 const results = await response.json();
-                
+
                 if (!results || results.length === 0) {
                     document.getElementById('sessionDetails').innerHTML = `
                         <h3>${testName}</h3>
                         <p style="color: #ff9800;">⚠️ No results found for this test in the last 7 days</p>
                         <p style="color: #888; font-size: 14px;">Run this test to see results here</p>
                     `;
-                    
+
                     // Clear charts
                     historyRpsChart.data.labels = [];
                     historyRpsChart.data.datasets[0].data = [];
                     historyRpsChart.update();
-                    
+
                     historyResponseTimeChart.data.labels = [];
                     historyResponseTimeChart.data.datasets[0].data = [];
                     historyResponseTimeChart.update();
-                    
+
                     historyStatusCodesChart.data.labels = [];
                     historyStatusCodesChart.data.datasets[0].data = [];
                     historyStatusCodesChart.update();
-                    
+
                     document.getElementById('historyTable').innerHTML = '';
                     return;
                 }
-                
+
                 // Update session details
                 const totalRequests = results.length;
                 const avgDuration = results.reduce((sum, r) => sum + r.duration, 0) / totalRequests;
                 const errors = results.filter(r => r.error).length;
                 const errorRate = (errors / totalRequests * 100).toFixed(2);
-                
+
                 const statusCodes = {};
                 results.forEach(r => {
                     statusCodes[r.status_code] = (statusCodes[r.status_code] || 0) + 1;
                 });
-                
+
                 document.getElementById('sessionDetails').innerHTML = `
                     <h3>${testName}</h3>
                     <p><strong>Total Requests:</strong> ${totalRequests}</p>
                     <p><strong>Avg Response Time:</strong> ${avgDuration.toFixed(2)} ms</p>
                     <p><strong>Error Rate:</strong> ${errorRate}%</p>
                     <p><strong>Status Codes:</strong> ${JSON.stringify(statusCodes)}</p>
-                    <p><strong>Time Range:</strong> ${new Date(results[results.length-1].timestamp).toLocaleString()} - ${new Date(results[0].timestamp).toLocaleString()}</p>
+                    <p><strong>Time Range:</strong> ${new Date(results[results.length - 1].timestamp).toLocaleString()} - ${new Date(results[0].timestamp).toLocaleString()}</p>
                 `;
-                
+
                 // Update charts
                 updateHistoryCharts(results);
-                
+
                 // Update table
                 const table = document.getElementById('historyTable');
                 table.innerHTML = '';
@@ -627,7 +771,7 @@
                         <td style="color: ${result.error ? 'red' : 'inherit'};">${result.error || '-'}</td>
                     `;
                 });
-                
+
             } catch (error) {
                 console.error('Error loading test results:', error);
             }
@@ -644,25 +788,25 @@
                 minuteGroups[minute].count++;
                 minuteGroups[minute].totalDuration += r.duration;
             });
-            
+
             const minutes = Object.keys(minuteGroups).sort();
             const rpsData = minutes.map(m => minuteGroups[m].count / 60);
             const avgDurationData = minutes.map(m => minuteGroups[m].totalDuration / minuteGroups[m].count);
-            
+
             historyRpsChart.data.labels = minutes.map(m => new Date(m).toLocaleTimeString());
             historyRpsChart.data.datasets[0].data = rpsData;
             historyRpsChart.update();
-            
+
             historyResponseTimeChart.data.labels = minutes.map(m => new Date(m).toLocaleTimeString());
             historyResponseTimeChart.data.datasets[0].data = avgDurationData;
             historyResponseTimeChart.update();
-            
+
             // Status codes with dynamic colors
             const statusCodes = {};
             results.forEach(r => {
                 statusCodes[r.status_code] = (statusCodes[r.status_code] || 0) + 1;
             });
-            
+
             const statusCodeColors = {
                 '200': '#4caf50',
                 '201': '#66bb6a',
@@ -675,10 +819,10 @@
                 '502': '#e53935',
                 '503': '#d32f2f'
             };
-            
+
             const labels = Object.keys(statusCodes);
             const colors = labels.map(code => statusCodeColors[code] || '#9e9e9e');
-            
+
             historyStatusCodesChart.data.labels = labels;
             historyStatusCodesChart.data.datasets[0].data = Object.values(statusCodes);
             historyStatusCodesChart.data.datasets[0].backgroundColor = colors;
@@ -687,7 +831,7 @@
 
         function updateMetrics(metrics) {
             const time = new Date(metrics.timestamp).toLocaleTimeString();
-            
+
             // Обновляем графики
             if (rpsChart.data.labels.length > 30) {
                 rpsChart.data.labels.shift();
@@ -695,11 +839,11 @@
                 responseTimeChart.data.labels.shift();
                 responseTimeChart.data.datasets[0].data.shift();
             }
-            
+
             rpsChart.data.labels.push(time);
             rpsChart.data.datasets[0].data.push(metrics.rps);
             rpsChart.update('none');
-            
+
             responseTimeChart.data.labels.push(time);
             responseTimeChart.data.datasets[0].data.push(metrics.avg_duration);
             responseTimeChart.update('none');
@@ -711,13 +855,13 @@
                     dataset.data.shift();
                 });
             }
-            
+
             statusCodesChart.data.labels.push(time);
-            
+
             // Создаем датасеты для каждого статус кода динамически
             const statusCodes = Object.keys(metrics.status_codes);
             const colors = ['#4caf50', '#2196f3', '#ff9800', '#f44336', '#9c27b0', '#607d8b', '#795548'];
-            
+
             statusCodes.forEach((code, index) => {
                 let dataset = statusCodesChart.data.datasets.find(d => d.label === `Status ${code}`);
                 if (!dataset) {
@@ -732,14 +876,14 @@
                 }
                 dataset.data.push(metrics.status_codes[code]);
             });
-            
+
             // Добавляем 0 для отсутствующих кодов в текущем измерении
             statusCodesChart.data.datasets.forEach(dataset => {
                 if (dataset.data.length < statusCodesChart.data.labels.length) {
                     dataset.data.push(0);
                 }
             });
-            
+
             statusCodesChart.update('none');
 
             // Обновляем таблицу
@@ -753,7 +897,7 @@
                 <td>${JSON.stringify(metrics.status_codes)}</td>
                 <td style="color: red; max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${metrics.last_error || ''}</td>
             `;
-            
+
             // Ограничиваем количество строк
             while (table.rows.length > 20) {
                 table.deleteRow(-1);
@@ -762,7 +906,7 @@
 
         async function saveConfig(e) {
             e.preventDefault();
-            
+
             const config = {
                 name: document.getElementById('testName').value,
                 url: document.getElementById('testUrl').value,
@@ -777,11 +921,11 @@
             if (document.getElementById('useDynamicRPS').checked) {
                 const steps = [];
                 const stepElements = document.querySelectorAll('.rps-step');
-                
+
                 stepElements.forEach(stepEl => {
                     const rpsValue = stepEl.querySelector('.rps-value').value;
                     const durationValue = stepEl.querySelector('.rps-duration').value;
-                    
+
                     if (rpsValue && durationValue) {
                         steps.push({
                             rps: parseInt(rpsValue),
@@ -789,7 +933,7 @@
                         });
                     }
                 });
-                
+
                 if (steps.length > 0) {
                     config.rps_steps = steps;
                     // Пересчитываем общую длительность
@@ -812,13 +956,13 @@
             try {
                 const url = editingConfigId ? `/api/configs/${editingConfigId}` : '/api/configs';
                 const method = editingConfigId ? 'PUT' : 'POST';
-                
+
                 const response = await fetch(url, {
                     method: method,
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(config)
                 });
-                
+
                 if (response.ok) {
                     loadConfigs();
                     cancelEdit();
@@ -832,18 +976,18 @@
             try {
                 const response = await fetch('/api/configs');
                 const configs = await response.json();
-                
+
                 const list = document.getElementById('configList');
                 list.innerHTML = '';
-                
+
                 configs.forEach(config => {
                     const div = document.createElement('div');
                     div.className = 'config-item';
-                    
-                    const rpsInfo = config.rps_steps && config.rps_steps.length > 0 
-                        ? `Dynamic RPS (${config.rps_steps.length} steps)` 
+
+                    const rpsInfo = config.rps_steps && config.rps_steps.length > 0
+                        ? `Dynamic RPS (${config.rps_steps.length} steps)`
                         : `RPS: ${config.rps}`;
-                    
+
                     div.innerHTML = `
                         <div class="config-actions">
                             <button class="btn-secondary btn-small" onclick="editConfig('${config.id}')">Edit</button>
@@ -857,7 +1001,7 @@
                     `;
                     list.appendChild(div);
                 });
-                
+
                 // Обновляем состояние кнопок
                 updateConfigButtons();
             } catch (error) {
@@ -871,18 +1015,18 @@
                 const response = await fetch('/api/configs');
                 const configs = await response.json();
                 const config = configs.find(c => c.id === configId);
-                
+
                 const startResponse = await fetch(`/api/configs/${configId}/start`, {
                     method: 'POST'
                 });
                 const result = await startResponse.json();
                 currentSessionId = result.session_id;
                 currentTestName = config ? config.name : 'Unknown Test';
-                
+
                 // Показываем индикатор активного теста
                 document.getElementById('activeTestName').textContent = currentTestName;
                 document.getElementById('activeTestIndicator').style.display = 'block';
-                
+
                 // Обновляем кнопки в списке конфигураций
                 updateConfigButtons();
             } catch (error) {
@@ -894,17 +1038,17 @@
             if (!currentSessionId) {
                 return;
             }
-            
+
             try {
                 await fetch(`/api/sessions/${currentSessionId}/stop`, {
                     method: 'POST'
                 });
                 currentSessionId = null;
                 currentTestName = null;
-                
+
                 // Скрываем индикатор активного теста
                 document.getElementById('activeTestIndicator').style.display = 'none';
-                
+
                 // Обновляем кнопки в списке конфигураций
                 updateConfigButtons();
             } catch (error) {
@@ -917,7 +1061,7 @@
             configItems.forEach(item => {
                 const startBtn = item.querySelector('.btn-success');
                 const stopBtn = item.querySelector('.btn-danger');
-                
+
                 if (currentSessionId) {
                     startBtn.disabled = true;
                     startBtn.style.opacity = '0.5';
@@ -949,17 +1093,17 @@
         async function importConfigs() {
             const file = document.getElementById('importFile').files[0];
             if (!file) return;
-            
+
             try {
                 const text = await file.text();
                 const configs = JSON.parse(text);
-                
+
                 const response = await fetch('/api/import', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(configs)
                 });
-                
+
                 if (response.ok) {
                     loadConfigs();
                 }
@@ -991,9 +1135,9 @@
             try {
                 const response = await fetch(`/api/configs/${configId}`);
                 const config = await response.json();
-                
+
                 editingConfigId = configId;
-                
+
                 // Заполняем форму данными
                 document.getElementById('testName').value = config.name;
                 document.getElementById('testUrl').value = config.url;
@@ -1002,7 +1146,7 @@
                 document.getElementById('testBody').value = config.body || '';
                 document.getElementById('testRps').value = config.rps;
                 document.getElementById('testDuration').value = config.duration;
-                
+
                 // Токен конфигурация
                 if (config.token_config) {
                     document.getElementById('useToken').checked = true;
@@ -1015,17 +1159,17 @@
                     document.getElementById('tokenHeaderName').value = config.token_config.header_name || '';
                     document.getElementById('tokenTtl').value = config.token_config.cache_ttl || 60;
                 }
-                
+
                 // RPS шаги
                 if (config.rps_steps && config.rps_steps.length > 0) {
                     document.getElementById('useDynamicRPS').checked = true;
                     document.getElementById('rpsStepsConfig').style.display = 'block';
                     document.getElementById('testRps').disabled = true;
                     document.getElementById('testDuration').disabled = true;
-                    
+
                     const stepsList = document.getElementById('rpsStepsList');
                     stepsList.innerHTML = '';
-                    
+
                     config.rps_steps.forEach(step => {
                         const stepDiv = document.createElement('div');
                         stepDiv.className = 'rps-step';
@@ -1037,11 +1181,11 @@
                         stepsList.appendChild(stepDiv);
                     });
                 }
-                
+
                 // Обновляем кнопки
                 document.getElementById('saveBtn').textContent = 'Update Configuration';
                 document.getElementById('cancelEditBtn').style.display = 'inline-block';
-                
+
             } catch (error) {
                 console.error('Error loading config:', error);
             }
@@ -1059,4 +1203,5 @@
         }
     </script>
 </body>
+
 </html>

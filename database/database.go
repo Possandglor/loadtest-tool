@@ -196,3 +196,83 @@ func (db *DB) GetTestConfig(id string) (*models.TestConfig, error) {
 func (db *DB) Close() error {
 	return db.conn.Close()
 }
+
+func (db *DB) SaveTestSession(sessionID, testID string) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO test_sessions (id, test_id, status, started_at)
+		VALUES (?, ?, ?, ?)`,
+		sessionID, testID, "running", time.Now())
+	return err
+}
+
+func (db *DB) UpdateTestSession(sessionID string, status string, endedAt time.Time) error {
+	_, err := db.conn.Exec(`
+		UPDATE test_sessions SET status = ?, ended_at = ? WHERE id = ?`,
+		status, endedAt, sessionID)
+	return err
+}
+
+func (db *DB) GetTestSessions(testID string) ([]map[string]interface{}, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, test_id, status, started_at, ended_at 
+		FROM test_sessions 
+		WHERE test_id = ? 
+		ORDER BY started_at DESC`,
+		testID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []map[string]interface{}
+	for rows.Next() {
+		var id, testID, status string
+		var startedAt, endedAt sql.NullTime
+
+		err := rows.Scan(&id, &testID, &status, &startedAt, &endedAt)
+		if err != nil {
+			continue
+		}
+
+		session := map[string]interface{}{
+			"id":         id,
+			"test_id":    testID,
+			"status":     status,
+			"started_at": startedAt.Time,
+		}
+		if endedAt.Valid {
+			session["ended_at"] = endedAt.Time
+		}
+
+		sessions = append(sessions, session)
+	}
+
+	return sessions, nil
+}
+
+func (db *DB) GetTestSession(sessionID string) (map[string]interface{}, error) {
+	row := db.conn.QueryRow(`
+		SELECT id, test_id, status, started_at, ended_at 
+		FROM test_sessions 
+		WHERE id = ?`, sessionID)
+
+	var id, testID, status string
+	var startedAt, endedAt sql.NullTime
+
+	err := row.Scan(&id, &testID, &status, &startedAt, &endedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	session := map[string]interface{}{
+		"id":         id,
+		"test_id":    testID,
+		"status":     status,
+		"started_at": startedAt.Time,
+	}
+	if endedAt.Valid {
+		session["ended_at"] = endedAt.Time
+	}
+
+	return session, nil
+}

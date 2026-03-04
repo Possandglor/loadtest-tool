@@ -129,7 +129,9 @@ func (s *Server) SetupRoutes() *gin.Engine {
 		api.DELETE("/configs/:id", s.deleteConfig)
 		api.POST("/configs/:id/start", s.startTest)
 		api.POST("/sessions/:id/stop", s.stopTest)
+		api.GET("/sessions/:testId", s.getSessions)
 		api.GET("/results/:testId", s.getResults)
+		api.GET("/session-results/:sessionId", s.getSessionResults)
 		api.POST("/export", s.exportConfigs)
 		api.POST("/import", s.importConfigs)
 	}
@@ -226,6 +228,9 @@ func (s *Server) startTest(c *gin.Context) {
 		return
 	}
 
+	// Сохраняем сессию в БД
+	s.db.SaveTestSession(sessionID, configID)
+
 	c.JSON(http.StatusOK, gin.H{"session_id": sessionID})
 }
 
@@ -236,6 +241,9 @@ func (s *Server) stopTest(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Обновляем статус сессии в БД
+	s.db.UpdateTestSession(sessionID, "stopped", time.Now())
 
 	c.JSON(http.StatusOK, gin.H{"message": "stopped"})
 }
@@ -261,6 +269,55 @@ func (s *Server) getResults(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, results)
+}
+
+func (s *Server) getSessions(c *gin.Context) {
+	testID := c.Param("testId")
+	
+	sessions, err := s.db.GetTestSessions(testID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, sessions)
+}
+
+func (s *Server) getSessionResults(c *gin.Context) {
+	sessionID := c.Param("sessionId")
+	
+	session, err := s.db.GetTestSession(sessionID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		return
+	}
+
+	testID := session["test_id"].(string)
+	startedAt := session["started_at"].(time.Time)
+
+	// Получаем результаты за период сессии
+	results, err := s.db.GetTestResults(testID, startedAt)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Фильтруем результаты по времени сессии
+	sessionResults := []models.TestResult{}
+	
+	for _, r := range results {
+		if r.Timestamp.After(startedAt) || r.Timestamp.Equal(startedAt) {
+			if endedAt, hasEnded := session["ended_at"].(time.Time); hasEnded {
+				if r.Timestamp.Before(endedAt) || r.Timestamp.Equal(endedAt) {
+					sessionResults = append(sessionResults, r)
+				}
+			} else {
+				sessionResults = append(sessionResults, r)
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, sessionResults)
 }
 
 func (s *Server) exportConfigs(c *gin.Context) {
