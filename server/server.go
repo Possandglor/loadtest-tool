@@ -1,7 +1,10 @@
 package server
 
 import (
+	"embed"
 	"encoding/json"
+	"html/template"
+	"io/fs"
 	"loadtest-tool/database"
 	"loadtest-tool/models"
 	"loadtest-tool/services"
@@ -12,6 +15,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
+
+//go:embed web/templates/*
+var templatesFS embed.FS
+
+//go:embed web/static/*
+var staticFS embed.FS
 
 type Server struct {
 	db     *database.DB
@@ -97,9 +106,13 @@ func (s *Server) SetupRoutes() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
-	// Статические файлы
-	r.Static("/static", "./web/static")
-	r.LoadHTMLGlob("web/templates/*")
+	// Загружаем шаблоны из embed
+	tmpl := template.Must(template.New("").ParseFS(templatesFS, "web/templates/*"))
+	r.SetHTMLTemplate(tmpl)
+
+	// Статические файлы из embed
+	staticFiles, _ := fs.Sub(staticFS, "web/static")
+	r.StaticFS("/static", http.FS(staticFiles))
 
 	// Главная страница
 	r.GET("/", func(c *gin.Context) {
