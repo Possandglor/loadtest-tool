@@ -18,11 +18,12 @@ import (
 )
 
 type LoadTestEngine struct {
-	tokenService *TokenService
-	resultsChan  chan models.TestResult
-	metricsChan  chan models.MetricsSnapshot
-	sessions     map[string]*TestSession
-	mutex        sync.RWMutex
+	tokenService      *TokenService
+	resultsChan       chan models.TestResult
+	metricsChan       chan models.MetricsSnapshot
+	sessions          map[string]*TestSession
+	mutex             sync.RWMutex
+	onSessionComplete func(sessionID string) // callback при завершении сессии
 }
 
 type TestSession struct {
@@ -84,6 +85,12 @@ func (lte *LoadTestEngine) StopTest(sessionID string) error {
 
 	session.Cancel()
 	session.IsActive = false
+	
+	// Вызываем callback при остановке
+	if lte.onSessionComplete != nil {
+		go lte.onSessionComplete(sessionID)
+	}
+	
 	return nil
 }
 
@@ -92,6 +99,11 @@ func (lte *LoadTestEngine) runTest(ctx context.Context, session *TestSession) {
 		lte.mutex.Lock()
 		session.IsActive = false
 		lte.mutex.Unlock()
+		
+		// Вызываем callback при завершении
+		if lte.onSessionComplete != nil {
+			lte.onSessionComplete(session.ID)
+		}
 	}()
 
 	config := session.Config
@@ -200,9 +212,19 @@ func (lte *LoadTestEngine) executeRequest(client *http.Client, session *TestSess
 
 	// Подготавливаем запрос
 	var body io.Reader
-	if config.Body != "" {
-		processedBody := lte.replaceVariables(config.Body, session)
+	var bodyText string
+	
+	// Выбираем body: если есть варианты - случайный, иначе основной
+	if len(config.BodyVariants) > 0 {
+		bodyText = config.BodyVariants[rand.Intn(len(config.BodyVariants))]
+	} else if config.Body != "" {
+		bodyText = config.Body
+	}
+	
+	if bodyText != "" {
+		processedBody := lte.replaceVariables(bodyText, session)
 		body = bytes.NewBufferString(processedBody)
+		result.RequestBody = processedBody // Сохраняем request body
 	}
 
 	processedURL := lte.replaceVariables(config.URL, session)
@@ -231,9 +253,11 @@ func (lte *LoadTestEngine) executeRequest(client *http.Client, session *TestSess
 	defer resp.Body.Close()
 
 	// Читаем ответ
-	_, readErr := io.ReadAll(resp.Body)
+	responseBody, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
 		result.Error = readErr.Error()
+	} else {
+		result.ResponseBody = string(responseBody) // Сохраняем response body
 	}
 
 	result.StatusCode = resp.StatusCode
@@ -468,9 +492,11 @@ func (lte *LoadTestEngine) calculateMetrics(results []models.TestResult) models.
 	var totalDuration int64
 	var errorCount int
 	var lastError string
+	durations := make([]int64, 0, len(results))
 
 	for _, result := range results {
 		totalDuration += result.Duration
+		durations = append(durations, result.Duration)
 		snapshot.StatusCodes[result.StatusCode]++
 		
 		if result.Error != "" || result.StatusCode >= 400 {
@@ -485,7 +511,39 @@ func (lte *LoadTestEngine) calculateMetrics(results []models.TestResult) models.
 	snapshot.ErrorRate = float64(errorCount) / float64(len(results)) * 100
 	snapshot.LastError = lastError
 
+	// Вычисляем перцентили
+	snapshot.P50Duration = lte.calculatePercentile(durations, 50)
+	snapshot.P95Duration = lte.calculatePercentile(durations, 95)
+	snapshot.P99Duration = lte.calculatePercentile(durations, 99)
+
 	return snapshot
+}
+
+func (lte *LoadTestEngine) calculatePercentile(durations []int64, percentile float64) float64 {
+	if len(durations) == 0 {
+		return 0
+	}
+
+	// Сортируем копию
+	sorted := make([]int64, len(durations))
+	copy(sorted, durations)
+	
+	// Простая сортировка вставками (для небольших массивов быстрее)
+	for i := 1; i < len(sorted); i++ {
+		key := sorted[i]
+		j := i - 1
+		for j >= 0 && sorted[j] > key {
+			sorted[j+1] = sorted[j]
+			j--
+		}
+		sorted[j+1] = key
+	}
+
+	index := int(float64(len(sorted)) * percentile / 100.0)
+	if index >= len(sorted) {
+		index = len(sorted) - 1
+	}
+	return float64(sorted[index])
 }
 
 func (lte *LoadTestEngine) GetResultsChan() <-chan models.TestResult {
@@ -494,4 +552,8 @@ func (lte *LoadTestEngine) GetResultsChan() <-chan models.TestResult {
 
 func (lte *LoadTestEngine) GetMetricsChan() <-chan models.MetricsSnapshot {
 	return lte.metricsChan
+}
+
+func (lte *LoadTestEngine) SetOnSessionComplete(callback func(sessionID string)) {
+	lte.onSessionComplete = callback
 }

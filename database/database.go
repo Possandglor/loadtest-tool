@@ -56,11 +56,18 @@ func (db *DB) migrate() error {
 			status_code INTEGER NOT NULL,
 			duration INTEGER NOT NULL,
 			error TEXT,
+			request_body TEXT,
+			response_body TEXT,
 			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (test_id) REFERENCES test_configs (id)
 		)`,
 		// Добавляем колонку rps_steps если её нет
 		`ALTER TABLE test_configs ADD COLUMN rps_steps TEXT`,
+		// Добавляем колонку body_variants если её нет
+		`ALTER TABLE test_configs ADD COLUMN body_variants TEXT`,
+		// Добавляем колонки для request/response body
+		`ALTER TABLE test_results ADD COLUMN request_body TEXT`,
+		`ALTER TABLE test_results ADD COLUMN response_body TEXT`,
 	}
 
 	for _, query := range queries {
@@ -79,13 +86,14 @@ func (db *DB) SaveTestConfig(config *models.TestConfig) error {
 	headers, _ := json.Marshal(config.Headers)
 	tokenConfig, _ := json.Marshal(config.TokenConfig)
 	rpsSteps, _ := json.Marshal(config.RPSSteps)
+	bodyVariants, _ := json.Marshal(config.BodyVariants)
 
 	_, err := db.conn.Exec(`
 		INSERT OR REPLACE INTO test_configs 
-		(id, name, url, method, headers, body, rps, duration, rps_steps, token_config, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, name, url, method, headers, body, body_variants, rps, duration, rps_steps, token_config, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		config.ID, config.Name, config.URL, config.Method,
-		string(headers), config.Body, config.RPS, config.Duration,
+		string(headers), config.Body, string(bodyVariants), config.RPS, config.Duration,
 		string(rpsSteps), string(tokenConfig), config.CreatedAt)
 
 	return err
@@ -93,7 +101,9 @@ func (db *DB) SaveTestConfig(config *models.TestConfig) error {
 
 func (db *DB) GetTestConfigs() ([]models.TestConfig, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, name, url, method, headers, body, rps, duration, 
+		SELECT id, name, url, method, headers, body, 
+		       COALESCE(body_variants, '') as body_variants,
+		       rps, duration, 
 		       COALESCE(rps_steps, '') as rps_steps,
 		       COALESCE(token_config, '') as token_config, 
 		       created_at 
@@ -106,16 +116,19 @@ func (db *DB) GetTestConfigs() ([]models.TestConfig, error) {
 	var configs []models.TestConfig
 	for rows.Next() {
 		var config models.TestConfig
-		var headersJSON, tokenConfigJSON, rpsStepsJSON string
+		var headersJSON, bodyVariantsJSON, tokenConfigJSON, rpsStepsJSON string
 
 		err := rows.Scan(&config.ID, &config.Name, &config.URL, &config.Method,
-			&headersJSON, &config.Body, &config.RPS, &config.Duration,
+			&headersJSON, &config.Body, &bodyVariantsJSON, &config.RPS, &config.Duration,
 			&rpsStepsJSON, &tokenConfigJSON, &config.CreatedAt)
 		if err != nil {
 			continue
 		}
 
 		json.Unmarshal([]byte(headersJSON), &config.Headers)
+		if bodyVariantsJSON != "" {
+			json.Unmarshal([]byte(bodyVariantsJSON), &config.BodyVariants)
+		}
 		if tokenConfigJSON != "" {
 			json.Unmarshal([]byte(tokenConfigJSON), &config.TokenConfig)
 		}
@@ -131,17 +144,21 @@ func (db *DB) GetTestConfigs() ([]models.TestConfig, error) {
 
 func (db *DB) SaveTestResult(result *models.TestResult) error {
 	_, err := db.conn.Exec(`
-		INSERT INTO test_results (id, test_id, status_code, duration, error, timestamp)
-		VALUES (?, ?, ?, ?, ?, ?)`,
+		INSERT INTO test_results (id, test_id, status_code, duration, error, request_body, response_body, timestamp)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		result.ID, result.TestID, result.StatusCode, result.Duration,
-		result.Error, result.Timestamp)
+		result.Error, result.RequestBody, result.ResponseBody, result.Timestamp)
 
 	return err
 }
 
 func (db *DB) GetTestResults(testID string, since time.Time) ([]models.TestResult, error) {
 	rows, err := db.conn.Query(`
-		SELECT * FROM test_results 
+		SELECT id, test_id, status_code, duration, error, 
+		       COALESCE(request_body, '') as request_body,
+		       COALESCE(response_body, '') as response_body,
+		       timestamp
+		FROM test_results 
 		WHERE test_id = ? AND timestamp >= ? 
 		ORDER BY timestamp DESC`,
 		testID, since)
@@ -154,7 +171,8 @@ func (db *DB) GetTestResults(testID string, since time.Time) ([]models.TestResul
 	for rows.Next() {
 		var result models.TestResult
 		err := rows.Scan(&result.ID, &result.TestID, &result.StatusCode,
-			&result.Duration, &result.Error, &result.Timestamp)
+			&result.Duration, &result.Error, &result.RequestBody, 
+			&result.ResponseBody, &result.Timestamp)
 		if err != nil {
 			continue
 		}
@@ -245,6 +263,40 @@ func (db *DB) GetTestSessions(testID string) ([]map[string]interface{}, error) {
 		}
 
 		sessions = append(sessions, session)
+	}
+
+	return sessions, nil
+}
+
+func (db *DB) GetActiveSessions() ([]map[string]interface{}, error) {
+	rows, err := db.conn.Query(`
+		SELECT s.id, s.test_id, s.status, s.started_at, c.name
+		FROM test_sessions s
+		JOIN test_configs c ON s.test_id = c.id
+		WHERE s.status = 'running'
+		ORDER BY s.started_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []map[string]interface{}
+	for rows.Next() {
+		var id, testID, status, testName string
+		var startedAt sql.NullTime
+
+		err := rows.Scan(&id, &testID, &status, &startedAt, &testName)
+		if err != nil {
+			continue
+		}
+
+		sessions = append(sessions, map[string]interface{}{
+			"id":         id,
+			"test_id":    testID,
+			"test_name":  testName,
+			"status":     status,
+			"started_at": startedAt.Time,
+		})
 	}
 
 	return sessions, nil

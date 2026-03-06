@@ -49,11 +49,18 @@ func NewServer(db *database.DB) *Server {
 		unregister: make(chan *websocket.Conn),
 	}
 
+	engine := services.NewLoadTestEngine()
+	
 	server := &Server{
 		db:     db,
-		engine: services.NewLoadTestEngine(),
+		engine: engine,
 		hub:    hub,
 	}
+
+	// Устанавливаем callback для завершения сессий
+	engine.SetOnSessionComplete(func(sessionID string) {
+		db.UpdateTestSession(sessionID, "completed", time.Now())
+	})
 
 	go hub.run()
 	go server.handleResults()
@@ -129,6 +136,7 @@ func (s *Server) SetupRoutes() *gin.Engine {
 		api.DELETE("/configs/:id", s.deleteConfig)
 		api.POST("/configs/:id/start", s.startTest)
 		api.POST("/sessions/:id/stop", s.stopTest)
+		api.GET("/sessions/active", s.getActiveSessions)
 		api.GET("/sessions/:testId", s.getSessions)
 		api.GET("/results/:testId", s.getResults)
 		api.GET("/session-results/:sessionId", s.getSessionResults)
@@ -275,6 +283,16 @@ func (s *Server) getSessions(c *gin.Context) {
 	testID := c.Param("testId")
 	
 	sessions, err := s.db.GetTestSessions(testID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, sessions)
+}
+
+func (s *Server) getActiveSessions(c *gin.Context) {
+	sessions, err := s.db.GetActiveSessions()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -306,6 +306,24 @@
                                 &#123;&#123;randomEmail&#125;&#125;
                             </small>
                         </div>
+                        
+                        <!-- Multiple Body Variants -->
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="useBodyVariants">
+                                Use Multiple Body Variants (random selection)
+                            </label>
+                        </div>
+                        <div id="bodyVariantsConfig" style="display: none;">
+                            <div class="form-group">
+                                <label>Body Variants (one JSON per line):</label>
+                                <textarea id="bodyVariants" rows="8" 
+                                    placeholder='{"refDKT":"&#123;&#123;randomInt:147,99999999&#125;&#125;","phone":"90633280040","exten":"60000023"}
+{"refDKT":"&#123;&#123;randomInt:147,99999999&#125;&#125;","phone":"90633280069","exten":"60000023"}
+{"refDKT":"&#123;&#123;randomInt:147,99999999&#125;&#125;","phone":"90633280079","exten":"60000025"}'></textarea>
+                                <small style="color: #666;">Each line = one variant. Random variant will be selected for each request.</small>
+                            </div>
+                        </div>
                         <div class="form-group">
                             <label>RPS (1-150):</label>
                             <input type="number" id="testRps" min="1" max="150" value="10" required>
@@ -414,9 +432,6 @@
                 <div class="chart-container">
                     <canvas id="statusCodesChart"></canvas>
                 </div>
-                <div class="chart-container">
-                    <canvas id="statusCodesBarChart"></canvas>
-                </div>
             </div>
 
 
@@ -444,16 +459,16 @@
         <div id="historyTab" class="tab-content">
             <div class="main-grid">
                 <div class="section">
-                    <h2>📋 Test Configurations</h2>
+                    <h2>📋 Test Sessions</h2>
                     <div id="historyList" class="history-list">
-                        <p style="color: #888;">Loading...</p>
+                        <p style="color: #888;">Select a test configuration to view its history...</p>
                     </div>
                 </div>
 
                 <div class="section">
-                    <h2>🕐 Test Sessions</h2>
-                    <div id="sessionsList" class="history-list" style="color: #888;">
-                        <p>Select a configuration</p>
+                    <h2>📊 Session Details</h2>
+                    <div id="sessionDetails" style="color: #888;">
+                        <p>No session selected</p>
                     </div>
                 </div>
             </div>
@@ -470,9 +485,6 @@
                     <div class="chart-container">
                         <canvas id="historyStatusCodesChart"></canvas>
                     </div>
-                    <div class="chart-container">
-                        <canvas id="historyStatusCodesBarChart"></canvas>
-                    </div>
                 </div>
             </div>
 
@@ -484,6 +496,8 @@
                             <th>Timestamp</th>
                             <th>Status Code</th>
                             <th>Duration (ms)</th>
+                            <th>Request Body</th>
+                            <th>Response Body</th>
                             <th>Error</th>
                         </tr>
                     </thead>
@@ -496,24 +510,29 @@
 
     <script>
         let ws;
-        let currentSessionId = null;
-        let currentTestName = null;
-        let sessionTotalStatusCodes = {}; // Накопительная статистика за сессию
-        let rpsChart, responseTimeChart, statusCodesChart, statusCodesBarChart;
-        let historyRpsChart, historyResponseTimeChart, historyStatusCodesChart, historyStatusCodesBarChart;
+        let currentSessionId = localStorage.getItem('currentSessionId') || null;
+        let currentTestName = localStorage.getItem('currentTestName') || null;
+        let rpsChart, responseTimeChart, statusCodesChart;
+        let historyRpsChart, historyResponseTimeChart, historyStatusCodesChart;
         let editingConfigId = null;
         let selectedTestId = null;
 
         // Инициализация
-        document.addEventListener('DOMContentLoaded', function () {
+        document.addEventListener('DOMContentLoaded', async function () {
             initWebSocket();
             initCharts();
             initHistoryCharts();
-            loadConfigs();
+            await loadConfigs();
             loadTestHistory();
+            restoreActiveSession();
 
             document.getElementById('useToken').addEventListener('change', function () {
                 document.getElementById('tokenConfig').style.display = this.checked ? 'block' : 'none';
+            });
+
+            document.getElementById('useBodyVariants').addEventListener('change', function () {
+                document.getElementById('bodyVariantsConfig').style.display = this.checked ? 'block' : 'none';
+                document.getElementById('testBody').disabled = this.checked;
             });
 
             document.getElementById('useDynamicRPS').addEventListener('change', function () {
@@ -586,17 +605,47 @@
                 type: 'line',
                 data: {
                     labels: [],
-                    datasets: [{
-                        label: 'Avg Response Time (ms)',
-                        data: [],
-                        borderColor: 'rgb(255, 99, 132)',
-                        tension: 0.1
-                    }]
+                    datasets: [
+                        {
+                            label: 'Avg',
+                            data: [],
+                            borderColor: 'rgb(75, 192, 192)',
+                            backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                            tension: 0.1
+                        },
+                        {
+                            label: 'P50',
+                            data: [],
+                            borderColor: 'rgb(54, 162, 235)',
+                            backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                            tension: 0.1
+                        },
+                        {
+                            label: 'P95',
+                            data: [],
+                            borderColor: 'rgb(255, 206, 86)',
+                            backgroundColor: 'rgba(255, 206, 86, 0.1)',
+                            tension: 0.1
+                        },
+                        {
+                            label: 'P99',
+                            data: [],
+                            borderColor: 'rgb(255, 99, 132)',
+                            backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                            tension: 0.1
+                        }
+                    ]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    scales: { y: { beginAtZero: true } }
+                    scales: { y: { beginAtZero: true } },
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Response Time Percentiles (ms)'
+                        }
+                    }
                 }
             });
 
@@ -615,30 +664,6 @@
                         title: {
                             display: true,
                             text: 'Status Codes Over Time'
-                        }
-                    }
-                }
-            });
-
-            const statusBarCtx = document.getElementById('statusCodesBarChart').getContext('2d');
-            statusCodesBarChart = new Chart(statusBarCtx, {
-                type: 'bar',
-                data: {
-                    labels: [],
-                    datasets: [{
-                        label: 'Total Count',
-                        data: [],
-                        backgroundColor: []
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: { y: { beginAtZero: true } },
-                    plugins: {
-                        title: {
-                            display: true,
-                            text: 'Status Codes Total'
                         }
                     }
                 }
@@ -686,31 +711,11 @@
 
             const historyStatusCtx = document.getElementById('historyStatusCodesChart').getContext('2d');
             historyStatusCodesChart = new Chart(historyStatusCtx, {
-                type: 'line',
-                data: {
-                    labels: [],
-                    datasets: []
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: { y: { beginAtZero: true } },
-                    plugins: {
-                        title: {
-                            display: true,
-                            text: 'Status Codes Over Time'
-                        }
-                    }
-                }
-            });
-
-            const historyStatusBarCtx = document.getElementById('historyStatusCodesBarChart').getContext('2d');
-            historyStatusCodesBarChart = new Chart(historyStatusBarCtx, {
                 type: 'bar',
                 data: {
                     labels: [],
                     datasets: [{
-                        label: 'Total Count',
+                        label: 'Status Codes',
                         data: [],
                         backgroundColor: []
                     }]
@@ -718,13 +723,7 @@
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    scales: { y: { beginAtZero: true } },
-                    plugins: {
-                        title: {
-                            display: true,
-                            text: 'Status Codes Total'
-                        }
-                    }
+                    scales: { y: { beginAtZero: true } }
                 }
             });
         }
@@ -740,7 +739,7 @@
                 configs.forEach(config => {
                     const div = document.createElement('div');
                     div.className = 'history-item';
-                    div.onclick = () => loadTestSessions(config.id, config.name);
+                    div.onclick = () => loadTestResults(config.id, config.name);
 
                     div.innerHTML = `
                         <strong>${config.name}</strong><br>
@@ -754,62 +753,28 @@
             }
         }
 
-        async function loadTestSessions(testId, testName) {
-            // Highlight selected config
-            document.querySelectorAll('#historyList .history-item').forEach(item => {
-                item.classList.remove('selected');
-            });
-            event.target.closest('.history-item').classList.add('selected');
+        async function loadTestResults(testId, testName) {
+            selectedTestId = testId;
 
-            try {
-                const response = await fetch(`/api/sessions/${testId}`);
-                const sessions = await response.json();
-
-                const list = document.getElementById('sessionsList');
-                list.innerHTML = '';
-
-                if (!sessions || sessions.length === 0) {
-                    list.innerHTML = '<p style="color: #888;">No sessions found for this test</p>';
-                    return;
-                }
-
-                sessions.forEach(session => {
-                    const div = document.createElement('div');
-                    div.className = 'history-item';
-                    div.onclick = () => loadSessionResults(session.id, testName, session);
-
-                    const startedAt = new Date(session.started_at).toLocaleString();
-                    const endedAt = session.ended_at ? new Date(session.ended_at).toLocaleString() : 'Running';
-                    const duration = session.ended_at 
-                        ? Math.round((new Date(session.ended_at) - new Date(session.started_at)) / 1000) + 's'
-                        : 'N/A';
-
-                    div.innerHTML = `
-                        <strong>Session ${session.id.substring(0, 8)}</strong>
-                        <span style="float: right; padding: 2px 8px; background: ${session.status === 'running' ? '#4caf50' : '#666'}; border-radius: 3px; font-size: 11px;">${session.status}</span><br>
-                        <small style="color: #888;">Started: ${startedAt}</small><br>
-                        <small style="color: #888;">Ended: ${endedAt}</small><br>
-                        <small style="color: #666;">Duration: ${duration}</small>
-                    `;
-                    list.appendChild(div);
-                });
-            } catch (error) {
-                console.error('Error loading sessions:', error);
-            }
-        }
-
-        async function loadSessionResults(sessionId, testName, session) {
             // Highlight selected
-            document.querySelectorAll('#sessionsList .history-item').forEach(item => {
+            document.querySelectorAll('.history-item').forEach(item => {
                 item.classList.remove('selected');
             });
             event.target.closest('.history-item').classList.add('selected');
 
             try {
-                const response = await fetch(`/api/session-results/${sessionId}`);
+                // Load results from last 7 days
+                const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+                const response = await fetch(`/api/results/${testId}?since=${since}`);
                 const results = await response.json();
 
-                if (!results || !Array.isArray(results) || results.length === 0) {
+                if (!results || results.length === 0) {
+                    document.getElementById('sessionDetails').innerHTML = `
+                        <h3>${testName}</h3>
+                        <p style="color: #ff9800;">⚠️ No results found for this test in the last 7 days</p>
+                        <p style="color: #888; font-size: 14px;">Run this test to see results here</p>
+                    `;
+
                     // Clear charts
                     historyRpsChart.data.labels = [];
                     historyRpsChart.data.datasets[0].data = [];
@@ -820,16 +785,32 @@
                     historyResponseTimeChart.update();
 
                     historyStatusCodesChart.data.labels = [];
-                    historyStatusCodesChart.data.datasets = [];
+                    historyStatusCodesChart.data.datasets[0].data = [];
                     historyStatusCodesChart.update();
-
-                    historyStatusCodesBarChart.data.labels = [];
-                    historyStatusCodesBarChart.data.datasets[0].data = [];
-                    historyStatusCodesBarChart.update();
 
                     document.getElementById('historyTable').innerHTML = '';
                     return;
                 }
+
+                // Update session details
+                const totalRequests = results.length;
+                const avgDuration = results.reduce((sum, r) => sum + r.duration, 0) / totalRequests;
+                const errors = results.filter(r => r.error).length;
+                const errorRate = (errors / totalRequests * 100).toFixed(2);
+
+                const statusCodes = {};
+                results.forEach(r => {
+                    statusCodes[r.status_code] = (statusCodes[r.status_code] || 0) + 1;
+                });
+
+                document.getElementById('sessionDetails').innerHTML = `
+                    <h3>${testName}</h3>
+                    <p><strong>Total Requests:</strong> ${totalRequests}</p>
+                    <p><strong>Avg Response Time:</strong> ${avgDuration.toFixed(2)} ms</p>
+                    <p><strong>Error Rate:</strong> ${errorRate}%</p>
+                    <p><strong>Status Codes:</strong> ${JSON.stringify(statusCodes)}</p>
+                    <p><strong>Time Range:</strong> ${new Date(results[results.length - 1].timestamp).toLocaleString()} - ${new Date(results[0].timestamp).toLocaleString()}</p>
+                `;
 
                 // Update charts
                 updateHistoryCharts(results);
@@ -839,10 +820,19 @@
                 table.innerHTML = '';
                 results.slice(0, 100).forEach(result => {
                     const row = table.insertRow();
+                    
+                    // Обрезаем длинные тела
+                    const truncate = (str, maxLen = 100) => {
+                        if (!str) return '-';
+                        return str.length > maxLen ? str.substring(0, maxLen) + '...' : str;
+                    };
+                    
                     row.innerHTML = `
                         <td>${new Date(result.timestamp).toLocaleString()}</td>
                         <td>${result.status_code}</td>
                         <td>${result.duration}</td>
+                        <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${result.request_body || ''}">${truncate(result.request_body)}</td>
+                        <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${result.response_body || ''}">${truncate(result.response_body)}</td>
                         <td style="color: ${result.error ? 'red' : 'inherit'};">${result.error || '-'}</td>
                     `;
                 });
@@ -858,14 +848,10 @@
             results.forEach(r => {
                 const minute = new Date(r.timestamp).toISOString().slice(0, 16);
                 if (!minuteGroups[minute]) {
-                    minuteGroups[minute] = { count: 0, totalDuration: 0, statusCodes: {} };
+                    minuteGroups[minute] = { count: 0, totalDuration: 0 };
                 }
                 minuteGroups[minute].count++;
                 minuteGroups[minute].totalDuration += r.duration;
-                
-                // Группируем статус коды по минутам
-                const code = r.status_code;
-                minuteGroups[minute].statusCodes[code] = (minuteGroups[minute].statusCodes[code] || 0) + 1;
             });
 
             const minutes = Object.keys(minuteGroups).sort();
@@ -880,7 +866,12 @@
             historyResponseTimeChart.data.datasets[0].data = avgDurationData;
             historyResponseTimeChart.update();
 
-            // Status codes over time with dynamic colors
+            // Status codes with dynamic colors
+            const statusCodes = {};
+            results.forEach(r => {
+                statusCodes[r.status_code] = (statusCodes[r.status_code] || 0) + 1;
+            });
+
             const statusCodeColors = {
                 '200': '#4caf50',
                 '201': '#66bb6a',
@@ -894,42 +885,13 @@
                 '503': '#d32f2f'
             };
 
-            // Собираем все уникальные статус коды
-            const allStatusCodes = new Set();
-            minutes.forEach(m => {
-                Object.keys(minuteGroups[m].statusCodes).forEach(code => allStatusCodes.add(code));
-            });
+            const labels = Object.keys(statusCodes);
+            const colors = labels.map(code => statusCodeColors[code] || '#9e9e9e');
 
-            // Создаем датасеты для каждого статус кода
-            historyStatusCodesChart.data.labels = minutes.map(m => new Date(m).toLocaleTimeString());
-            historyStatusCodesChart.data.datasets = [];
-
-            allStatusCodes.forEach(code => {
-                const data = minutes.map(m => minuteGroups[m].statusCodes[code] || 0);
-                historyStatusCodesChart.data.datasets.push({
-                    label: `Status ${code}`,
-                    data: data,
-                    borderColor: statusCodeColors[code] || '#9e9e9e',
-                    backgroundColor: (statusCodeColors[code] || '#9e9e9e') + '20',
-                    tension: 0.1,
-                    fill: false
-                });
-            });
+            historyStatusCodesChart.data.labels = labels;
+            historyStatusCodesChart.data.datasets[0].data = Object.values(statusCodes);
+            historyStatusCodesChart.data.datasets[0].backgroundColor = colors;
             historyStatusCodesChart.update();
-
-            // Bar chart with totals
-            const totalStatusCodes = {};
-            results.forEach(r => {
-                totalStatusCodes[r.status_code] = (totalStatusCodes[r.status_code] || 0) + 1;
-            });
-
-            const barLabels = Object.keys(totalStatusCodes);
-            const barColors = barLabels.map(code => statusCodeColors[code] || '#9e9e9e');
-
-            historyStatusCodesBarChart.data.labels = barLabels;
-            historyStatusCodesBarChart.data.datasets[0].data = Object.values(totalStatusCodes);
-            historyStatusCodesBarChart.data.datasets[0].backgroundColor = barColors;
-            historyStatusCodesBarChart.update();
         }
 
         function updateMetrics(metrics) {
@@ -940,7 +902,7 @@
                 rpsChart.data.labels.shift();
                 rpsChart.data.datasets[0].data.shift();
                 responseTimeChart.data.labels.shift();
-                responseTimeChart.data.datasets[0].data.shift();
+                responseTimeChart.data.datasets.forEach(ds => ds.data.shift());
             }
 
             rpsChart.data.labels.push(time);
@@ -949,6 +911,9 @@
 
             responseTimeChart.data.labels.push(time);
             responseTimeChart.data.datasets[0].data.push(metrics.avg_duration);
+            responseTimeChart.data.datasets[1].data.push(metrics.p50_duration);
+            responseTimeChart.data.datasets[2].data.push(metrics.p95_duration);
+            responseTimeChart.data.datasets[3].data.push(metrics.p99_duration);
             responseTimeChart.update('none');
 
             // Обновляем график статус кодов
@@ -989,26 +954,6 @@
 
             statusCodesChart.update('none');
 
-            // Update bar chart with session totals (накопительно)
-            const statusCodeColors = {
-                '200': '#4caf50', '201': '#66bb6a', '204': '#81c784',
-                '400': '#ff9800', '401': '#fb8c00', '403': '#f57c00', '404': '#ef6c00',
-                '500': '#f44336', '502': '#e53935', '503': '#d32f2f'
-            };
-
-            // Накапливаем статистику за всю сессию
-            Object.keys(metrics.status_codes).forEach(code => {
-                sessionTotalStatusCodes[code] = (sessionTotalStatusCodes[code] || 0) + metrics.status_codes[code];
-            });
-
-            const barLabels = Object.keys(sessionTotalStatusCodes);
-            const barColors = barLabels.map(code => statusCodeColors[code] || '#9e9e9e');
-
-            statusCodesBarChart.data.labels = barLabels;
-            statusCodesBarChart.data.datasets[0].data = Object.values(sessionTotalStatusCodes);
-            statusCodesBarChart.data.datasets[0].backgroundColor = barColors;
-            statusCodesBarChart.update('none');
-
             // Обновляем таблицу
             const table = document.getElementById('metricsTable');
             const row = table.insertRow(0);
@@ -1035,10 +980,20 @@
                 url: document.getElementById('testUrl').value,
                 method: document.getElementById('testMethod').value,
                 headers: JSON.parse(document.getElementById('testHeaders').value || '{}'),
-                body: document.getElementById('testBody').value,
                 rps: parseInt(document.getElementById('testRps').value),
                 duration: parseInt(document.getElementById('testDuration').value)
             };
+
+            // Body variants или обычный body
+            if (document.getElementById('useBodyVariants').checked) {
+                const variantsText = document.getElementById('bodyVariants').value;
+                const variants = variantsText.split('\n').filter(line => line.trim() !== '');
+                if (variants.length > 0) {
+                    config.body_variants = variants;
+                }
+            } else {
+                config.body = document.getElementById('testBody').value;
+            }
 
             // RPS шаги
             if (document.getElementById('useDynamicRPS').checked) {
@@ -1146,8 +1101,9 @@
                 currentSessionId = result.session_id;
                 currentTestName = config ? config.name : 'Unknown Test';
 
-                // Сбрасываем накопительную статистику
-                sessionTotalStatusCodes = {};
+                // Сохраняем в localStorage
+                localStorage.setItem('currentSessionId', currentSessionId);
+                localStorage.setItem('currentTestName', currentTestName);
 
                 // Показываем индикатор активного теста
                 document.getElementById('activeTestName').textContent = currentTestName;
@@ -1172,6 +1128,10 @@
                 currentSessionId = null;
                 currentTestName = null;
 
+                // Удаляем из localStorage
+                localStorage.removeItem('currentSessionId');
+                localStorage.removeItem('currentTestName');
+
                 // Скрываем индикатор активного теста
                 document.getElementById('activeTestIndicator').style.display = 'none';
 
@@ -1180,6 +1140,40 @@
             } catch (error) {
                 console.error('Error stopping test:', error);
             }
+        }
+
+        function restoreActiveSession() {
+            // Проверяем активные сессии на сервере
+            fetch('/api/sessions/active')
+                .then(response => response.json())
+                .then(sessions => {
+                    if (sessions && sessions.length > 0) {
+                        // Берем первую активную сессию
+                        const session = sessions[0];
+                        currentSessionId = session.id;
+                        currentTestName = session.test_name;
+                        
+                        // Сохраняем в localStorage
+                        localStorage.setItem('currentSessionId', currentSessionId);
+                        localStorage.setItem('currentTestName', currentTestName);
+                        
+                        // Показываем индикатор
+                        document.getElementById('activeTestName').textContent = currentTestName;
+                        document.getElementById('activeTestIndicator').style.display = 'block';
+                        updateConfigButtons();
+                    } else {
+                        // Нет активных сессий - очищаем localStorage
+                        localStorage.removeItem('currentSessionId');
+                        localStorage.removeItem('currentTestName');
+                        currentSessionId = null;
+                        currentTestName = null;
+                        document.getElementById('activeTestIndicator').style.display = 'none';
+                        updateConfigButtons();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking active sessions:', error);
+                });
         }
 
         function updateConfigButtons() {
@@ -1269,7 +1263,17 @@
                 document.getElementById('testUrl').value = config.url;
                 document.getElementById('testMethod').value = config.method;
                 document.getElementById('testHeaders').value = JSON.stringify(config.headers || {}, null, 2);
-                document.getElementById('testBody').value = config.body || '';
+                
+                // Body variants или обычный body
+                if (config.body_variants && config.body_variants.length > 0) {
+                    document.getElementById('useBodyVariants').checked = true;
+                    document.getElementById('bodyVariantsConfig').style.display = 'block';
+                    document.getElementById('testBody').disabled = true;
+                    document.getElementById('bodyVariants').value = config.body_variants.join('\n');
+                } else {
+                    document.getElementById('testBody').value = config.body || '';
+                }
+                
                 document.getElementById('testRps').value = config.rps;
                 document.getElementById('testDuration').value = config.duration;
 

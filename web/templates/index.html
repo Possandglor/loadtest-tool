@@ -306,6 +306,24 @@
                                 &#123;&#123;randomEmail&#125;&#125;
                             </small>
                         </div>
+                        
+                        <!-- Multiple Body Variants -->
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="useBodyVariants">
+                                Use Multiple Body Variants (random selection)
+                            </label>
+                        </div>
+                        <div id="bodyVariantsConfig" style="display: none;">
+                            <div class="form-group">
+                                <label>Body Variants (one JSON per line):</label>
+                                <textarea id="bodyVariants" rows="8" 
+                                    placeholder='{"refDKT":"&#123;&#123;randomInt:147,99999999&#125;&#125;","phone":"90633280040","exten":"60000023"}
+{"refDKT":"&#123;&#123;randomInt:147,99999999&#125;&#125;","phone":"90633280069","exten":"60000023"}
+{"refDKT":"&#123;&#123;randomInt:147,99999999&#125;&#125;","phone":"90633280079","exten":"60000025"}'></textarea>
+                                <small style="color: #666;">Each line = one variant. Random variant will be selected for each request.</small>
+                            </div>
+                        </div>
                         <div class="form-group">
                             <label>RPS (1-150):</label>
                             <input type="number" id="testRps" min="1" max="150" value="10" required>
@@ -478,6 +496,8 @@
                             <th>Timestamp</th>
                             <th>Status Code</th>
                             <th>Duration (ms)</th>
+                            <th>Request Body</th>
+                            <th>Response Body</th>
                             <th>Error</th>
                         </tr>
                     </thead>
@@ -490,23 +510,29 @@
 
     <script>
         let ws;
-        let currentSessionId = null;
-        let currentTestName = null;
+        let currentSessionId = localStorage.getItem('currentSessionId') || null;
+        let currentTestName = localStorage.getItem('currentTestName') || null;
         let rpsChart, responseTimeChart, statusCodesChart;
         let historyRpsChart, historyResponseTimeChart, historyStatusCodesChart;
         let editingConfigId = null;
         let selectedTestId = null;
 
         // Инициализация
-        document.addEventListener('DOMContentLoaded', function () {
+        document.addEventListener('DOMContentLoaded', async function () {
             initWebSocket();
             initCharts();
             initHistoryCharts();
-            loadConfigs();
+            await loadConfigs();
             loadTestHistory();
+            restoreActiveSession();
 
             document.getElementById('useToken').addEventListener('change', function () {
                 document.getElementById('tokenConfig').style.display = this.checked ? 'block' : 'none';
+            });
+
+            document.getElementById('useBodyVariants').addEventListener('change', function () {
+                document.getElementById('bodyVariantsConfig').style.display = this.checked ? 'block' : 'none';
+                document.getElementById('testBody').disabled = this.checked;
             });
 
             document.getElementById('useDynamicRPS').addEventListener('change', function () {
@@ -579,17 +605,47 @@
                 type: 'line',
                 data: {
                     labels: [],
-                    datasets: [{
-                        label: 'Avg Response Time (ms)',
-                        data: [],
-                        borderColor: 'rgb(255, 99, 132)',
-                        tension: 0.1
-                    }]
+                    datasets: [
+                        {
+                            label: 'Avg',
+                            data: [],
+                            borderColor: 'rgb(75, 192, 192)',
+                            backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                            tension: 0.1
+                        },
+                        {
+                            label: 'P50',
+                            data: [],
+                            borderColor: 'rgb(54, 162, 235)',
+                            backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                            tension: 0.1
+                        },
+                        {
+                            label: 'P95',
+                            data: [],
+                            borderColor: 'rgb(255, 206, 86)',
+                            backgroundColor: 'rgba(255, 206, 86, 0.1)',
+                            tension: 0.1
+                        },
+                        {
+                            label: 'P99',
+                            data: [],
+                            borderColor: 'rgb(255, 99, 132)',
+                            backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                            tension: 0.1
+                        }
+                    ]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    scales: { y: { beginAtZero: true } }
+                    scales: { y: { beginAtZero: true } },
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Response Time Percentiles (ms)'
+                        }
+                    }
                 }
             });
 
@@ -764,10 +820,19 @@
                 table.innerHTML = '';
                 results.slice(0, 100).forEach(result => {
                     const row = table.insertRow();
+                    
+                    // Обрезаем длинные тела
+                    const truncate = (str, maxLen = 100) => {
+                        if (!str) return '-';
+                        return str.length > maxLen ? str.substring(0, maxLen) + '...' : str;
+                    };
+                    
                     row.innerHTML = `
                         <td>${new Date(result.timestamp).toLocaleString()}</td>
                         <td>${result.status_code}</td>
                         <td>${result.duration}</td>
+                        <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${result.request_body || ''}">${truncate(result.request_body)}</td>
+                        <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${result.response_body || ''}">${truncate(result.response_body)}</td>
                         <td style="color: ${result.error ? 'red' : 'inherit'};">${result.error || '-'}</td>
                     `;
                 });
@@ -837,7 +902,7 @@
                 rpsChart.data.labels.shift();
                 rpsChart.data.datasets[0].data.shift();
                 responseTimeChart.data.labels.shift();
-                responseTimeChart.data.datasets[0].data.shift();
+                responseTimeChart.data.datasets.forEach(ds => ds.data.shift());
             }
 
             rpsChart.data.labels.push(time);
@@ -846,6 +911,9 @@
 
             responseTimeChart.data.labels.push(time);
             responseTimeChart.data.datasets[0].data.push(metrics.avg_duration);
+            responseTimeChart.data.datasets[1].data.push(metrics.p50_duration);
+            responseTimeChart.data.datasets[2].data.push(metrics.p95_duration);
+            responseTimeChart.data.datasets[3].data.push(metrics.p99_duration);
             responseTimeChart.update('none');
 
             // Обновляем график статус кодов
@@ -912,10 +980,20 @@
                 url: document.getElementById('testUrl').value,
                 method: document.getElementById('testMethod').value,
                 headers: JSON.parse(document.getElementById('testHeaders').value || '{}'),
-                body: document.getElementById('testBody').value,
                 rps: parseInt(document.getElementById('testRps').value),
                 duration: parseInt(document.getElementById('testDuration').value)
             };
+
+            // Body variants или обычный body
+            if (document.getElementById('useBodyVariants').checked) {
+                const variantsText = document.getElementById('bodyVariants').value;
+                const variants = variantsText.split('\n').filter(line => line.trim() !== '');
+                if (variants.length > 0) {
+                    config.body_variants = variants;
+                }
+            } else {
+                config.body = document.getElementById('testBody').value;
+            }
 
             // RPS шаги
             if (document.getElementById('useDynamicRPS').checked) {
@@ -1023,6 +1101,10 @@
                 currentSessionId = result.session_id;
                 currentTestName = config ? config.name : 'Unknown Test';
 
+                // Сохраняем в localStorage
+                localStorage.setItem('currentSessionId', currentSessionId);
+                localStorage.setItem('currentTestName', currentTestName);
+
                 // Показываем индикатор активного теста
                 document.getElementById('activeTestName').textContent = currentTestName;
                 document.getElementById('activeTestIndicator').style.display = 'block';
@@ -1046,6 +1128,10 @@
                 currentSessionId = null;
                 currentTestName = null;
 
+                // Удаляем из localStorage
+                localStorage.removeItem('currentSessionId');
+                localStorage.removeItem('currentTestName');
+
                 // Скрываем индикатор активного теста
                 document.getElementById('activeTestIndicator').style.display = 'none';
 
@@ -1054,6 +1140,40 @@
             } catch (error) {
                 console.error('Error stopping test:', error);
             }
+        }
+
+        function restoreActiveSession() {
+            // Проверяем активные сессии на сервере
+            fetch('/api/sessions/active')
+                .then(response => response.json())
+                .then(sessions => {
+                    if (sessions && sessions.length > 0) {
+                        // Берем первую активную сессию
+                        const session = sessions[0];
+                        currentSessionId = session.id;
+                        currentTestName = session.test_name;
+                        
+                        // Сохраняем в localStorage
+                        localStorage.setItem('currentSessionId', currentSessionId);
+                        localStorage.setItem('currentTestName', currentTestName);
+                        
+                        // Показываем индикатор
+                        document.getElementById('activeTestName').textContent = currentTestName;
+                        document.getElementById('activeTestIndicator').style.display = 'block';
+                        updateConfigButtons();
+                    } else {
+                        // Нет активных сессий - очищаем localStorage
+                        localStorage.removeItem('currentSessionId');
+                        localStorage.removeItem('currentTestName');
+                        currentSessionId = null;
+                        currentTestName = null;
+                        document.getElementById('activeTestIndicator').style.display = 'none';
+                        updateConfigButtons();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking active sessions:', error);
+                });
         }
 
         function updateConfigButtons() {
@@ -1143,7 +1263,17 @@
                 document.getElementById('testUrl').value = config.url;
                 document.getElementById('testMethod').value = config.method;
                 document.getElementById('testHeaders').value = JSON.stringify(config.headers || {}, null, 2);
-                document.getElementById('testBody').value = config.body || '';
+                
+                // Body variants или обычный body
+                if (config.body_variants && config.body_variants.length > 0) {
+                    document.getElementById('useBodyVariants').checked = true;
+                    document.getElementById('bodyVariantsConfig').style.display = 'block';
+                    document.getElementById('testBody').disabled = true;
+                    document.getElementById('bodyVariants').value = config.body_variants.join('\n');
+                } else {
+                    document.getElementById('testBody').value = config.body || '';
+                }
+                
                 document.getElementById('testRps').value = config.rps;
                 document.getElementById('testDuration').value = config.duration;
 

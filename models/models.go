@@ -18,6 +18,7 @@ type TestConfig struct {
 	Method      string            `json:"method" db:"method"`
 	Headers     map[string]string `json:"headers" db:"headers"`
 	Body        string            `json:"body" db:"body"`
+	BodyVariants []string         `json:"body_variants,omitempty" db:"body_variants"` // варианты тела запроса
 	RPS         int               `json:"rps" db:"rps"`         // базовый RPS (для обратной совместимости)
 	Duration    int               `json:"duration" db:"duration"` // общая длительность
 	RPSSteps    []RPSStep         `json:"rps_steps,omitempty" db:"rps_steps"` // динамические шаги RPS
@@ -38,12 +39,14 @@ type TokenConfig struct {
 
 // TestResult результат одного запроса
 type TestResult struct {
-	ID         string    `json:"id" db:"id"`
-	TestID     string    `json:"test_id" db:"test_id"`
-	StatusCode int       `json:"status_code" db:"status_code"`
-	Duration   int64     `json:"duration" db:"duration"` // миллисекунды
-	Error      string    `json:"error,omitempty" db:"error"`
-	Timestamp  time.Time `json:"timestamp" db:"timestamp"`
+	ID           string    `json:"id" db:"id"`
+	TestID       string    `json:"test_id" db:"test_id"`
+	StatusCode   int       `json:"status_code" db:"status_code"`
+	Duration     int64     `json:"duration" db:"duration"` // миллисекунды
+	Error        string    `json:"error,omitempty" db:"error"`
+	RequestBody  string    `json:"request_body,omitempty" db:"request_body"`
+	ResponseBody string    `json:"response_body,omitempty" db:"response_body"`
+	Timestamp    time.Time `json:"timestamp" db:"timestamp"`
 }
 
 // TestSession сессия тестирования
@@ -60,6 +63,9 @@ type MetricsSnapshot struct {
 	Timestamp    time.Time         `json:"timestamp"`
 	RPS          int               `json:"rps"`
 	AvgDuration  float64           `json:"avg_duration"`
+	P50Duration  float64           `json:"p50_duration"`
+	P95Duration  float64           `json:"p95_duration"`
+	P99Duration  float64           `json:"p99_duration"`
 	StatusCodes  map[int]int       `json:"status_codes"`
 	ErrorRate    float64           `json:"error_rate"`
 	LastError    string            `json:"last_error,omitempty"`
