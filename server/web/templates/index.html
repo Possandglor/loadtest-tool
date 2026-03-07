@@ -432,6 +432,9 @@
                 <div class="chart-container">
                     <canvas id="statusCodesChart"></canvas>
                 </div>
+                <div class="chart-container">
+                    <canvas id="errorRateChart"></canvas>
+                </div>
             </div>
 
 
@@ -512,7 +515,7 @@
         let ws;
         let currentSessionId = localStorage.getItem('currentSessionId') || null;
         let currentTestName = localStorage.getItem('currentTestName') || null;
-        let rpsChart, responseTimeChart, statusCodesChart;
+        let rpsChart, responseTimeChart, statusCodesChart, errorRateChart;
         let historyRpsChart, historyResponseTimeChart, historyStatusCodesChart;
         let editingConfigId = null;
         let selectedTestId = null;
@@ -668,6 +671,38 @@
                     }
                 }
             });
+
+            const errorCtx = document.getElementById('errorRateChart').getContext('2d');
+            errorRateChart = new Chart(errorCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Error Rate (%)',
+                        data: [],
+                        borderColor: 'rgb(255, 99, 132)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                        tension: 0.1,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: { 
+                        y: { 
+                            beginAtZero: true,
+                            max: 100
+                        } 
+                    },
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Error Rate Over Time'
+                        }
+                    }
+                }
+            });
         }
 
         function initHistoryCharts() {
@@ -711,19 +746,21 @@
 
             const historyStatusCtx = document.getElementById('historyStatusCodesChart').getContext('2d');
             historyStatusCodesChart = new Chart(historyStatusCtx, {
-                type: 'bar',
+                type: 'line',
                 data: {
                     labels: [],
-                    datasets: [{
-                        label: 'Status Codes',
-                        data: [],
-                        backgroundColor: []
-                    }]
+                    datasets: []
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    scales: { y: { beginAtZero: true } }
+                    scales: { y: { beginAtZero: true } },
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Status Codes Over Time'
+                        }
+                    }
                 }
             });
         }
@@ -739,7 +776,7 @@
                 configs.forEach(config => {
                     const div = document.createElement('div');
                     div.className = 'history-item';
-                    div.onclick = () => loadTestResults(config.id, config.name);
+                    div.onclick = () => loadTestSessions(config.id, config.name);
 
                     div.innerHTML = `
                         <strong>${config.name}</strong><br>
@@ -753,7 +790,7 @@
             }
         }
 
-        async function loadTestResults(testId, testName) {
+        async function loadTestSessions(testId, testName) {
             selectedTestId = testId;
 
             // Highlight selected
@@ -763,39 +800,66 @@
             event.target.closest('.history-item').classList.add('selected');
 
             try {
-                // Load results from last 7 days
-                const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-                const response = await fetch(`/api/results/${testId}?since=${since}`);
+                // Загружаем сессии теста
+                const response = await fetch(`/api/sessions/${testId}`);
+                const sessions = await response.json();
+
+                const details = document.getElementById('sessionDetails');
+                
+                if (!sessions || sessions.length === 0) {
+                    details.innerHTML = `
+                        <h3>${testName}</h3>
+                        <p style="color: #ff9800;">⚠️ No sessions found for this test</p>
+                    `;
+                    return;
+                }
+
+                // Показываем список сессий
+                details.innerHTML = `
+                    <h3>${testName}</h3>
+                    <p style="color: #888;">Select a session to view details:</p>
+                    <div id="sessionsList"></div>
+                `;
+
+                const sessionsList = document.getElementById('sessionsList');
+                sessions.forEach(session => {
+                    const sessionDiv = document.createElement('div');
+                    sessionDiv.className = 'history-item';
+                    sessionDiv.style.marginBottom = '10px';
+                    sessionDiv.onclick = () => loadSessionResults(session.id, testName);
+
+                    const duration = session.ended_at 
+                        ? Math.round((new Date(session.ended_at) - new Date(session.started_at)) / 1000)
+                        : 'running';
+
+                    sessionDiv.innerHTML = `
+                        <strong>Session ${session.id.substring(0, 8)}</strong>
+                        <span class="status ${session.status}">${session.status}</span><br>
+                        <small style="color: #888;">Started: ${new Date(session.started_at).toLocaleString()}</small><br>
+                        <small style="color: #666;">Duration: ${duration}s</small>
+                    `;
+                    sessionsList.appendChild(sessionDiv);
+                });
+
+            } catch (error) {
+                console.error('Error loading sessions:', error);
+            }
+        }
+
+        async function loadSessionResults(sessionId, testName) {
+            try {
+                const response = await fetch(`/api/session-results/${sessionId}`);
                 const results = await response.json();
 
                 if (!results || results.length === 0) {
-                    document.getElementById('sessionDetails').innerHTML = `
-                        <h3>${testName}</h3>
-                        <p style="color: #ff9800;">⚠️ No results found for this test in the last 7 days</p>
-                        <p style="color: #888; font-size: 14px;">Run this test to see results here</p>
-                    `;
-
-                    // Clear charts
-                    historyRpsChart.data.labels = [];
-                    historyRpsChart.data.datasets[0].data = [];
-                    historyRpsChart.update();
-
-                    historyResponseTimeChart.data.labels = [];
-                    historyResponseTimeChart.data.datasets[0].data = [];
-                    historyResponseTimeChart.update();
-
-                    historyStatusCodesChart.data.labels = [];
-                    historyStatusCodesChart.data.datasets[0].data = [];
-                    historyStatusCodesChart.update();
-
-                    document.getElementById('historyTable').innerHTML = '';
+                    alert('No results found for this session');
                     return;
                 }
 
                 // Update session details
                 const totalRequests = results.length;
                 const avgDuration = results.reduce((sum, r) => sum + r.duration, 0) / totalRequests;
-                const errors = results.filter(r => r.error).length;
+                const errors = results.filter(r => r.error || r.status_code >= 400).length;
                 const errorRate = (errors / totalRequests * 100).toFixed(2);
 
                 const statusCodes = {};
@@ -804,7 +868,7 @@
                 });
 
                 document.getElementById('sessionDetails').innerHTML = `
-                    <h3>${testName}</h3>
+                    <h3>${testName} - Session ${sessionId.substring(0, 8)}</h3>
                     <p><strong>Total Requests:</strong> ${totalRequests}</p>
                     <p><strong>Avg Response Time:</strong> ${avgDuration.toFixed(2)} ms</p>
                     <p><strong>Error Rate:</strong> ${errorRate}%</p>
@@ -866,31 +930,46 @@
             historyResponseTimeChart.data.datasets[0].data = avgDurationData;
             historyResponseTimeChart.update();
 
-            // Status codes with dynamic colors
-            const statusCodes = {};
+            // Status codes over time - группируем по минутам
+            const statusCodesByMinute = {};
             results.forEach(r => {
-                statusCodes[r.status_code] = (statusCodes[r.status_code] || 0) + 1;
+                const minute = new Date(r.timestamp).toISOString().slice(0, 16);
+                if (!statusCodesByMinute[minute]) {
+                    statusCodesByMinute[minute] = {};
+                }
+                const code = r.status_code.toString();
+                statusCodesByMinute[minute][code] = (statusCodesByMinute[minute][code] || 0) + 1;
             });
 
             const statusCodeColors = {
-                '200': '#4caf50',
-                '201': '#66bb6a',
-                '204': '#81c784',
-                '400': '#ff9800',
-                '401': '#fb8c00',
-                '403': '#f57c00',
-                '404': '#ef6c00',
-                '500': '#f44336',
-                '502': '#e53935',
-                '503': '#d32f2f'
+                '200': '#4caf50', '201': '#66bb6a', '204': '#81c784',
+                '400': '#ff9800', '401': '#fb8c00', '403': '#f57c00', '404': '#ef6c00',
+                '500': '#f44336', '502': '#e53935', '503': '#d32f2f', '504': '#c62828'
             };
 
-            const labels = Object.keys(statusCodes);
-            const colors = labels.map(code => statusCodeColors[code] || '#9e9e9e');
+            // Получаем все уникальные статус коды
+            const allStatusCodes = new Set();
+            Object.values(statusCodesByMinute).forEach(codes => {
+                Object.keys(codes).forEach(code => allStatusCodes.add(code));
+            });
 
-            historyStatusCodesChart.data.labels = labels;
-            historyStatusCodesChart.data.datasets[0].data = Object.values(statusCodes);
-            historyStatusCodesChart.data.datasets[0].backgroundColor = colors;
+            // Создаем datasets для каждого статус кода
+            historyStatusCodesChart.data.labels = minutes.map(m => new Date(m).toLocaleTimeString());
+            historyStatusCodesChart.data.datasets = [];
+
+            allStatusCodes.forEach(code => {
+                const color = statusCodeColors[code] || '#9e9e9e';
+                const data = minutes.map(m => statusCodesByMinute[m]?.[code] || 0);
+                
+                historyStatusCodesChart.data.datasets.push({
+                    label: `Status ${code}`,
+                    data: data,
+                    borderColor: color,
+                    backgroundColor: color + '20',
+                    tension: 0.1
+                });
+            });
+
             historyStatusCodesChart.update();
         }
 
@@ -903,6 +982,8 @@
                 rpsChart.data.datasets[0].data.shift();
                 responseTimeChart.data.labels.shift();
                 responseTimeChart.data.datasets.forEach(ds => ds.data.shift());
+                errorRateChart.data.labels.shift();
+                errorRateChart.data.datasets[0].data.shift();
             }
 
             rpsChart.data.labels.push(time);
@@ -916,6 +997,11 @@
             responseTimeChart.data.datasets[3].data.push(metrics.p99_duration);
             responseTimeChart.update('none');
 
+            // Обновляем график ошибок
+            errorRateChart.data.labels.push(time);
+            errorRateChart.data.datasets[0].data.push(metrics.error_rate);
+            errorRateChart.update('none');
+
             // Обновляем график статус кодов
             if (statusCodesChart.data.labels.length > 30) {
                 statusCodesChart.data.labels.shift();
@@ -926,18 +1012,31 @@
 
             statusCodesChart.data.labels.push(time);
 
-            // Создаем датасеты для каждого статус кода динамически
+            // Создаем датасеты для каждого статус кода динамически с цветами
             const statusCodes = Object.keys(metrics.status_codes);
-            const colors = ['#4caf50', '#2196f3', '#ff9800', '#f44336', '#9c27b0', '#607d8b', '#795548'];
+            const statusColorMap = {
+                '200': '#4caf50',  // зеленый - успех
+                '201': '#66bb6a',
+                '204': '#81c784',
+                '400': '#ff9800',  // оранжевый - клиентские ошибки
+                '401': '#fb8c00',
+                '403': '#f57c00',
+                '404': '#ef6c00',
+                '500': '#f44336',  // красный - серверные ошибки
+                '502': '#e53935',
+                '503': '#d32f2f',
+                '504': '#c62828'
+            };
 
-            statusCodes.forEach((code, index) => {
+            statusCodes.forEach((code) => {
                 let dataset = statusCodesChart.data.datasets.find(d => d.label === `Status ${code}`);
                 if (!dataset) {
+                    const color = statusColorMap[code] || '#9e9e9e';
                     dataset = {
                         label: `Status ${code}`,
                         data: new Array(statusCodesChart.data.labels.length - 1).fill(0),
-                        borderColor: colors[index % colors.length],
-                        backgroundColor: colors[index % colors.length] + '20',
+                        borderColor: color,
+                        backgroundColor: color + '20',
                         tension: 0.1
                     };
                     statusCodesChart.data.datasets.push(dataset);
