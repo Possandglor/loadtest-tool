@@ -1,0 +1,35 @@
+{
+  "name": "Sequential Login and Get User",
+  "url": "",
+  "method": "POST",
+  "is_sequential": true,
+  "rps": 5,
+  "duration": 60,
+  "steps": [
+    {
+      "order": 1,
+      "name": "Login",
+      "url": "https://jsonplaceholder.typicode.com/posts",
+      "method": "POST",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": "{\"title\":\"test\",\"body\":\"test\",\"userId\":1}",
+      "extractors": [
+        {
+          "name": "post_id",
+          "json_path": "$.id"
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "name": "Get Post",
+      "url": "https://jsonplaceholder.typicode.com/posts/{{post_id}}",
+      "method": "GET",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    }
+  ]
+}

@@ -274,9 +274,22 @@
                             <label>Test Name:</label>
                             <input type="text" id="testName" required>
                         </div>
+
+                        <!-- Test Mode -->
+                        <div class="form-group">
+                            <label>Test Mode:</label>
+                            <select id="testMode" onchange="toggleTestMode()">
+                                <option value="parallel">Parallel (default)</option>
+                                <option value="sequential">Sequential Scenario</option>
+                                <option value="random">Random Weighted</option>
+                            </select>
+                        </div>
+
+                        <!-- Parallel Mode Config -->
+                        <div id="parallelConfig">
                         <div class="form-group">
                             <label>URL:</label>
-                            <input type="url" id="testUrl" required>
+                            <input type="url" id="testUrl">
                         </div>
                         <div class="form-group">
                             <label>Method:</label>
@@ -324,6 +337,22 @@
                                 <small style="color: #666;">Each line = one variant. Random variant will be selected for each request.</small>
                             </div>
                         </div>
+                        </div>
+
+                        <!-- Sequential Scenario Config -->
+                        <div id="sequentialConfig" style="display: none;">
+                            <h3>Sequential Steps</h3>
+                            <div id="stepsList"></div>
+                            <button type="button" class="btn-secondary btn-small" onclick="addStep()">+ Add Step</button>
+                        </div>
+
+                        <!-- Random Weighted Config -->
+                        <div id="randomConfig" style="display: none;">
+                            <h3>Weighted Requests</h3>
+                            <div id="weightedList"></div>
+                            <button type="button" class="btn-secondary btn-small" onclick="addWeightedRequest()">+ Add Request</button>
+                        </div>
+
                         <div class="form-group">
                             <label>RPS (1-150):</label>
                             <input type="number" id="testRps" min="1" max="150" value="10" required>
@@ -1071,19 +1100,106 @@
             }
         }
 
+        function toggleTestMode() {
+            const mode = document.getElementById('testMode').value;
+            document.getElementById('parallelConfig').style.display = mode === 'parallel' ? 'block' : 'none';
+            document.getElementById('sequentialConfig').style.display = mode === 'sequential' ? 'block' : 'none';
+            document.getElementById('randomConfig').style.display = mode === 'random' ? 'block' : 'none';
+        }
+
+        function addStep() {
+            const list = document.getElementById('stepsList');
+            const index = list.children.length;
+            const div = document.createElement('div');
+            div.className = 'step-item';
+            div.style.cssText = 'border: 1px solid #444; padding: 10px; margin: 10px 0; border-radius: 5px;';
+            div.innerHTML = `
+                <h4>Step ${index + 1}</h4>
+                <input type="text" placeholder="Step Name" class="step-name" style="width: 100%; margin: 5px 0;">
+                <input type="url" placeholder="URL (supports &#123;&#123;variables&#125;&#125; and dynamic functions)" class="step-url" style="width: 100%; margin: 5px 0;">
+                <select class="step-method" style="width: 100%; margin: 5px 0;">
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                    <option value="PUT">PUT</option>
+                    <option value="DELETE">DELETE</option>
+                </select>
+                <textarea placeholder='Headers JSON (supports &#123;&#123;variables&#125;&#125;): {"Authorization": "Bearer &#123;&#123;token&#125;&#125;"}' class="step-headers" style="width: 100%; margin: 5px 0;"></textarea>
+                <textarea placeholder='Body (supports &#123;&#123;variables&#125;&#125; and dynamic functions): &#123;&#123;randomJson:{"key":"val1"},{"key":"val2"}&#125;&#125;' class="step-body" style="width: 100%; margin: 5px 0;"></textarea>
+                <textarea placeholder='Extractors JSON: [{"name":"user_id","json_path":"$.data.id"}]' class="step-extractors" style="width: 100%; margin: 5px 0;"></textarea>
+                <small style="color: #666;">Dynamic: &#123;&#123;random:a,b&#125;&#125;, &#123;&#123;randomInt:1,100&#125;&#125;, &#123;&#123;uuid&#125;&#125;, &#123;&#123;timestamp&#125;&#125;, &#123;&#123;randomString:10&#125;&#125;, &#123;&#123;randomEmail&#125;&#125;</small><br>
+                <button type="button" class="btn-danger btn-small" onclick="this.parentElement.remove()">Remove</button>
+            `;
+            list.appendChild(div);
+        }
+
+        function addWeightedRequest() {
+            const list = document.getElementById('weightedList');
+            const div = document.createElement('div');
+            div.className = 'weighted-item';
+            div.style.cssText = 'border: 1px solid #444; padding: 10px; margin: 10px 0; border-radius: 5px;';
+            div.innerHTML = `
+                <input type="text" placeholder="Request Name" class="req-name" style="width: 100%; margin: 5px 0;">
+                <input type="url" placeholder="URL (supports &#123;&#123;variables&#125;&#125; and dynamic functions)" class="req-url" style="width: 100%; margin: 5px 0;">
+                <select class="req-method" style="width: 100%; margin: 5px 0;">
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                    <option value="PUT">PUT</option>
+                    <option value="DELETE">DELETE</option>
+                </select>
+                <textarea placeholder='Headers JSON (supports &#123;&#123;variables&#125;&#125;): {"Authorization": "Bearer &#123;&#123;token&#125;&#125;"}' class="req-headers" style="width: 100%; margin: 5px 0;"></textarea>
+                <textarea placeholder='Body (supports dynamic functions): {"id": &#123;&#123;randomInt:1,1000&#125;&#125;, "name": "&#123;&#123;randomString:10&#125;&#125;"}' class="req-body" style="width: 100%; margin: 5px 0;"></textarea>
+                <input type="number" placeholder="Weight (1-100)" class="req-weight" min="1" max="100" value="50" style="width: 100%; margin: 5px 0;">
+                <small style="color: #666;">Dynamic: &#123;&#123;random:a,b&#125;&#125;, &#123;&#123;randomInt:1,100&#125;&#125;, &#123;&#123;uuid&#125;&#125;, &#123;&#123;timestamp&#125;&#125;, &#123;&#123;randomString:10&#125;&#125;, &#123;&#123;randomEmail&#125;&#125;</small><br>
+                <button type="button" class="btn-danger btn-small" onclick="this.parentElement.remove()">Remove</button>
+            `;
+            list.appendChild(div);
+        }
+
         async function saveConfig(e) {
             e.preventDefault();
 
+            const testMode = document.getElementById('testMode').value;
+
             const config = {
                 name: document.getElementById('testName').value,
-                url: document.getElementById('testUrl').value,
-                method: document.getElementById('testMethod').value,
+                url: document.getElementById('testUrl').value || '',
+                method: document.getElementById('testMethod').value || 'GET',
                 headers: JSON.parse(document.getElementById('testHeaders').value || '{}'),
                 rps: parseInt(document.getElementById('testRps').value),
                 duration: parseInt(document.getElementById('testDuration').value)
             };
 
-            // Body variants или обычный body
+            // Test Mode
+            if (testMode === 'sequential') {
+                config.is_sequential = true;
+                config.steps = [];
+                document.querySelectorAll('.step-item').forEach((item, idx) => {
+                    config.steps.push({
+                        order: idx + 1,
+                        name: item.querySelector('.step-name').value,
+                        url: item.querySelector('.step-url').value,
+                        method: item.querySelector('.step-method').value,
+                        headers: JSON.parse(item.querySelector('.step-headers').value || '{}'),
+                        body: item.querySelector('.step-body').value,
+                        extractors: JSON.parse(item.querySelector('.step-extractors').value || '[]')
+                    });
+                });
+            } else if (testMode === 'random') {
+                config.is_random = true;
+                config.weighted_requests = [];
+                document.querySelectorAll('.weighted-item').forEach(item => {
+                    config.weighted_requests.push({
+                        name: item.querySelector('.req-name').value,
+                        url: item.querySelector('.req-url').value,
+                        method: item.querySelector('.req-method').value,
+                        headers: JSON.parse(item.querySelector('.req-headers').value || '{}'),
+                        body: item.querySelector('.req-body').value,
+                        weight: parseInt(item.querySelector('.req-weight').value)
+                    });
+                });
+            }
+
+            // Body variants або обычный body
             if (document.getElementById('useBodyVariants').checked) {
                 const variantsText = document.getElementById('bodyVariants').value;
                 const variants = variantsText.split('\n').filter(line => line.trim() !== '');
@@ -1161,6 +1277,10 @@
                     const div = document.createElement('div');
                     div.className = 'config-item';
 
+                    let modeInfo = 'Parallel';
+                    if (config.is_sequential) modeInfo = `Sequential (${config.steps?.length || 0} steps)`;
+                    if (config.is_random) modeInfo = `Random (${config.weighted_requests?.length || 0} requests)`;
+
                     const rpsInfo = config.rps_steps && config.rps_steps.length > 0
                         ? `Dynamic RPS (${config.rps_steps.length} steps)`
                         : `RPS: ${config.rps}`;
@@ -1169,7 +1289,8 @@
                         <div class="config-actions">
                             <button class="btn-secondary btn-small" onclick="editConfig('${config.id}')">Edit</button>
                         </div>
-                        <strong>${config.name}</strong> - ${config.method} ${config.url}<br>
+                        <strong>${config.name}</strong> - ${modeInfo}<br>
+                        ${config.method} ${config.url}<br>
                         ${rpsInfo}, Duration: ${config.duration}s
                         <div style="margin-top: 10px;">
                             <button class="btn-success" onclick="startTest('${config.id}')">Start</button>

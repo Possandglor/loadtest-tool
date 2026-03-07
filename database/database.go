@@ -61,18 +61,18 @@ func (db *DB) migrate() error {
 			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (test_id) REFERENCES test_configs (id)
 		)`,
-		// Добавляем колонку rps_steps если её нет
 		`ALTER TABLE test_configs ADD COLUMN rps_steps TEXT`,
-		// Добавляем колонку body_variants если её нет
 		`ALTER TABLE test_configs ADD COLUMN body_variants TEXT`,
-		// Добавляем колонки для request/response body
-		`ALTER TABLE test_results ADD COLUMN request_body TEXT`,
-		`ALTER TABLE test_results ADD COLUMN response_body TEXT`,
+		`ALTER TABLE test_configs ADD COLUMN request_body TEXT`,
+		`ALTER TABLE test_configs ADD COLUMN response_body TEXT`,
+		`ALTER TABLE test_configs ADD COLUMN is_sequential BOOLEAN DEFAULT 0`,
+		`ALTER TABLE test_configs ADD COLUMN steps TEXT`,
+		`ALTER TABLE test_configs ADD COLUMN is_random BOOLEAN DEFAULT 0`,
+		`ALTER TABLE test_configs ADD COLUMN weighted_requests TEXT`,
 	}
 
 	for _, query := range queries {
 		if _, err := db.conn.Exec(query); err != nil {
-			// Игнорируем ошибку если колонка уже существует
 			if !strings.Contains(err.Error(), "duplicate column name") {
 				return err
 			}
@@ -87,14 +87,18 @@ func (db *DB) SaveTestConfig(config *models.TestConfig) error {
 	tokenConfig, _ := json.Marshal(config.TokenConfig)
 	rpsSteps, _ := json.Marshal(config.RPSSteps)
 	bodyVariants, _ := json.Marshal(config.BodyVariants)
+	steps, _ := json.Marshal(config.Steps)
+	weightedRequests, _ := json.Marshal(config.WeightedRequests)
 
 	_, err := db.conn.Exec(`
 		INSERT OR REPLACE INTO test_configs 
-		(id, name, url, method, headers, body, body_variants, rps, duration, rps_steps, token_config, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, name, url, method, headers, body, body_variants, rps, duration, rps_steps, token_config, 
+		 is_sequential, steps, is_random, weighted_requests, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		config.ID, config.Name, config.URL, config.Method,
 		string(headers), config.Body, string(bodyVariants), config.RPS, config.Duration,
-		string(rpsSteps), string(tokenConfig), config.CreatedAt)
+		string(rpsSteps), string(tokenConfig), config.IsSequential, string(steps),
+		config.IsRandom, string(weightedRequests), config.CreatedAt)
 
 	return err
 }
@@ -105,7 +109,11 @@ func (db *DB) GetTestConfigs() ([]models.TestConfig, error) {
 		       COALESCE(body_variants, '') as body_variants,
 		       rps, duration, 
 		       COALESCE(rps_steps, '') as rps_steps,
-		       COALESCE(token_config, '') as token_config, 
+		       COALESCE(token_config, '') as token_config,
+		       COALESCE(is_sequential, 0) as is_sequential,
+		       COALESCE(steps, '') as steps,
+		       COALESCE(is_random, 0) as is_random,
+		       COALESCE(weighted_requests, '') as weighted_requests,
 		       created_at 
 		FROM test_configs ORDER BY created_at DESC`)
 	if err != nil {
@@ -116,11 +124,12 @@ func (db *DB) GetTestConfigs() ([]models.TestConfig, error) {
 	var configs []models.TestConfig
 	for rows.Next() {
 		var config models.TestConfig
-		var headersJSON, bodyVariantsJSON, tokenConfigJSON, rpsStepsJSON string
+		var headersJSON, bodyVariantsJSON, tokenConfigJSON, rpsStepsJSON, stepsJSON, weightedRequestsJSON string
 
 		err := rows.Scan(&config.ID, &config.Name, &config.URL, &config.Method,
 			&headersJSON, &config.Body, &bodyVariantsJSON, &config.RPS, &config.Duration,
-			&rpsStepsJSON, &tokenConfigJSON, &config.CreatedAt)
+			&rpsStepsJSON, &tokenConfigJSON, &config.IsSequential, &stepsJSON,
+			&config.IsRandom, &weightedRequestsJSON, &config.CreatedAt)
 		if err != nil {
 			continue
 		}
@@ -134,6 +143,12 @@ func (db *DB) GetTestConfigs() ([]models.TestConfig, error) {
 		}
 		if rpsStepsJSON != "" {
 			json.Unmarshal([]byte(rpsStepsJSON), &config.RPSSteps)
+		}
+		if stepsJSON != "" {
+			json.Unmarshal([]byte(stepsJSON), &config.Steps)
+		}
+		if weightedRequestsJSON != "" {
+			json.Unmarshal([]byte(weightedRequestsJSON), &config.WeightedRequests)
 		}
 
 		configs = append(configs, config)
@@ -186,16 +201,21 @@ func (db *DB) GetTestConfig(id string) (*models.TestConfig, error) {
 	row := db.conn.QueryRow(`
 		SELECT id, name, url, method, headers, body, rps, duration, 
 		       COALESCE(rps_steps, '') as rps_steps,
-		       COALESCE(token_config, '') as token_config, 
+		       COALESCE(token_config, '') as token_config,
+		       COALESCE(is_sequential, 0) as is_sequential,
+		       COALESCE(steps, '') as steps,
+		       COALESCE(is_random, 0) as is_random,
+		       COALESCE(weighted_requests, '') as weighted_requests,
 		       created_at 
 		FROM test_configs WHERE id = ?`, id)
 	
 	var config models.TestConfig
-	var headersJSON, tokenConfigJSON, rpsStepsJSON string
+	var headersJSON, tokenConfigJSON, rpsStepsJSON, stepsJSON, weightedRequestsJSON string
 
 	err := row.Scan(&config.ID, &config.Name, &config.URL, &config.Method,
 		&headersJSON, &config.Body, &config.RPS, &config.Duration,
-		&rpsStepsJSON, &tokenConfigJSON, &config.CreatedAt)
+		&rpsStepsJSON, &tokenConfigJSON, &config.IsSequential, &stepsJSON,
+		&config.IsRandom, &weightedRequestsJSON, &config.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -206,6 +226,12 @@ func (db *DB) GetTestConfig(id string) (*models.TestConfig, error) {
 	}
 	if rpsStepsJSON != "" {
 		json.Unmarshal([]byte(rpsStepsJSON), &config.RPSSteps)
+	}
+	if stepsJSON != "" {
+		json.Unmarshal([]byte(stepsJSON), &config.Steps)
+	}
+	if weightedRequestsJSON != "" {
+		json.Unmarshal([]byte(weightedRequestsJSON), &config.WeightedRequests)
 	}
 
 	return &config, nil

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"io"
 	"loadtest-tool/models"
 	"math/rand"
@@ -100,7 +101,6 @@ func (lte *LoadTestEngine) runTest(ctx context.Context, session *TestSession) {
 		session.IsActive = false
 		lte.mutex.Unlock()
 		
-		// Вызываем callback при завершении
 		if lte.onSessionComplete != nil {
 			lte.onSessionComplete(session.ID)
 		}
@@ -114,8 +114,11 @@ func (lte *LoadTestEngine) runTest(ctx context.Context, session *TestSession) {
 		},
 	}
 
-	// Если есть RPS шаги, используем их, иначе базовый RPS
-	if len(config.RPSSteps) > 0 {
+	if config.IsSequential {
+		lte.runSequentialScenario(ctx, session, client)
+	} else if config.IsRandom {
+		lte.runRandomTest(ctx, session, client)
+	} else if len(config.RPSSteps) > 0 {
 		lte.runDynamicRPSTest(ctx, session, client)
 	} else {
 		lte.runStaticRPSTest(ctx, session, client, config.RPS)
@@ -556,4 +559,259 @@ func (lte *LoadTestEngine) GetMetricsChan() <-chan models.MetricsSnapshot {
 
 func (lte *LoadTestEngine) SetOnSessionComplete(callback func(sessionID string)) {
 	lte.onSessionComplete = callback
+}
+
+func (lte *LoadTestEngine) runSequentialScenario(ctx context.Context, session *TestSession, client *http.Client) {
+	if len(session.Config.Steps) == 0 {
+		return
+	}
+
+	rps := session.Config.RPS
+	if rps <= 0 {
+		rps = 1
+	}
+	interval := time.Second / time.Duration(rps)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			go lte.executeScenario(client, session)
+		}
+	}
+}
+
+func (lte *LoadTestEngine) executeScenario(client *http.Client, session *TestSession) {
+	scenarioVars := make(map[string]string)
+
+	for _, step := range session.Config.Steps {
+		result := lte.executeStep(client, session, step, scenarioVars)
+
+		for _, extractor := range step.Extractors {
+			value := lte.extractValue(result.ResponseBody, extractor)
+			scenarioVars[extractor.Name] = value
+		}
+
+		lte.safeChannelSend(session, result)
+
+		if result.Error != "" || result.StatusCode >= 400 {
+			return
+		}
+	}
+}
+
+func (lte *LoadTestEngine) executeStep(client *http.Client, session *TestSession, step models.ScenarioStep, scenarioVars map[string]string) models.TestResult {
+	start := time.Now()
+	result := models.TestResult{
+		ID:        uuid.New().String(),
+		TestID:    session.Config.ID,
+		Timestamp: start,
+	}
+
+	var body io.Reader
+	if step.Body != "" {
+		processedBody := lte.replaceVariablesWithScenario(step.Body, session, scenarioVars)
+		body = bytes.NewBufferString(processedBody)
+		result.RequestBody = processedBody
+	}
+
+	processedURL := lte.replaceVariablesWithScenario(step.URL, session, scenarioVars)
+	req, err := http.NewRequest(step.Method, processedURL, body)
+	if err != nil {
+		result.Error = err.Error()
+		result.Duration = time.Since(start).Milliseconds()
+		return result
+	}
+
+	for key, value := range step.Headers {
+		processedValue := lte.replaceVariablesWithScenario(value, session, scenarioVars)
+		req.Header.Set(key, processedValue)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		result.Error = err.Error()
+		result.Duration = time.Since(start).Milliseconds()
+		return result
+	}
+	defer resp.Body.Close()
+
+	responseBody, _ := io.ReadAll(resp.Body)
+	result.ResponseBody = string(responseBody)
+	result.StatusCode = resp.StatusCode
+	result.Duration = time.Since(start).Milliseconds()
+
+	return result
+}
+
+func (lte *LoadTestEngine) replaceVariablesWithScenario(text string, session *TestSession, scenarioVars map[string]string) string {
+	result := text
+
+	for key, value := range scenarioVars {
+		placeholder := "{{" + key + "}}"
+		result = strings.ReplaceAll(result, placeholder, value)
+	}
+
+	session.VarMutex.RLock()
+	for key, value := range session.Variables {
+		placeholder := "{{" + key + "}}"
+		result = strings.ReplaceAll(result, placeholder, value)
+	}
+	session.VarMutex.RUnlock()
+
+	return lte.processDynamicFunctions(result)
+}
+
+func (lte *LoadTestEngine) extractValue(responseBody string, extractor models.Extractor) string {
+	if extractor.JSONPath != "" {
+		return lte.extractJSONPath(responseBody, extractor.JSONPath)
+	}
+	if extractor.Regex != "" {
+		re := regexp.MustCompile(extractor.Regex)
+		matches := re.FindStringSubmatch(responseBody)
+		if len(matches) > 1 {
+			return matches[1]
+		}
+	}
+	return ""
+}
+
+func (lte *LoadTestEngine) extractJSONPath(responseBody, jsonPath string) string {
+	var data interface{}
+	if err := json.Unmarshal([]byte(responseBody), &data); err != nil {
+		return ""
+	}
+
+	path := strings.TrimPrefix(jsonPath, "$.")
+	parts := strings.Split(path, ".")
+
+	current := data
+	for _, part := range parts {
+		switch v := current.(type) {
+		case map[string]interface{}:
+			current = v[part]
+		default:
+			return ""
+		}
+	}
+
+	if current == nil {
+		return ""
+	}
+
+	switch v := current.(type) {
+	case string:
+		return v
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(v)
+	default:
+		b, _ := json.Marshal(v)
+		return string(b)
+	}
+}
+
+func (lte *LoadTestEngine) runRandomTest(ctx context.Context, session *TestSession, client *http.Client) {
+	if len(session.Config.WeightedRequests) == 0 {
+		return
+	}
+
+	rps := session.Config.RPS
+	if rps <= 0 {
+		rps = 1
+	}
+	interval := time.Second / time.Duration(rps)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			request := lte.selectWeightedRequest(session.Config.WeightedRequests)
+			go lte.executeWeightedRequest(client, session, request)
+		}
+	}
+}
+
+func (lte *LoadTestEngine) selectWeightedRequest(requests []models.WeightedRequest) models.WeightedRequest {
+	totalWeight := 0
+	for _, r := range requests {
+		totalWeight += r.Weight
+	}
+
+	if totalWeight == 0 {
+		return requests[0]
+	}
+
+	random := rand.Intn(totalWeight)
+	cumulative := 0
+
+	for _, r := range requests {
+		cumulative += r.Weight
+		if random < cumulative {
+			return r
+		}
+	}
+
+	return requests[0]
+}
+
+func (lte *LoadTestEngine) executeWeightedRequest(client *http.Client, session *TestSession, request models.WeightedRequest) {
+	start := time.Now()
+	result := models.TestResult{
+		ID:        uuid.New().String(),
+		TestID:    session.Config.ID,
+		Timestamp: start,
+	}
+
+	lte.mutex.RLock()
+	isActive := session.IsActive
+	lte.mutex.RUnlock()
+
+	if !isActive {
+		return
+	}
+
+	var body io.Reader
+	if request.Body != "" {
+		processedBody := lte.replaceVariables(request.Body, session)
+		body = bytes.NewBufferString(processedBody)
+		result.RequestBody = processedBody
+	}
+
+	processedURL := lte.replaceVariables(request.URL, session)
+	req, err := http.NewRequest(request.Method, processedURL, body)
+	if err != nil {
+		result.Error = err.Error()
+		result.Duration = time.Since(start).Milliseconds()
+		lte.safeChannelSend(session, result)
+		return
+	}
+
+	for key, value := range request.Headers {
+		processedValue := lte.replaceVariables(value, session)
+		req.Header.Set(key, processedValue)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		result.Error = err.Error()
+		result.Duration = time.Since(start).Milliseconds()
+		lte.safeChannelSend(session, result)
+		return
+	}
+	defer resp.Body.Close()
+
+	responseBody, _ := io.ReadAll(resp.Body)
+	result.ResponseBody = string(responseBody)
+	result.StatusCode = resp.StatusCode
+	result.Duration = time.Since(start).Milliseconds()
+
+	lte.safeChannelSend(session, result)
 }

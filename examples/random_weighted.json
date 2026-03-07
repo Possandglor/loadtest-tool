@@ -1,0 +1,38 @@
+{
+  "name": "Random API Calls",
+  "url": "",
+  "method": "GET",
+  "is_random": true,
+  "rps": 10,
+  "duration": 60,
+  "weighted_requests": [
+    {
+      "name": "Get Posts",
+      "url": "https://jsonplaceholder.typicode.com/posts",
+      "method": "GET",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "weight": 50
+    },
+    {
+      "name": "Get Users",
+      "url": "https://jsonplaceholder.typicode.com/users",
+      "method": "GET",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "weight": 30
+    },
+    {
+      "name": "Create Post",
+      "url": "https://jsonplaceholder.typicode.com/posts",
+      "method": "POST",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": "{\"title\":\"{{randomString:10}}\",\"body\":\"test\",\"userId\":{{randomInt:1,10}}}",
+      "weight": 20
+    }
+  ]
+}

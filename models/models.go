@@ -10,20 +10,53 @@ type RPSStep struct {
 	Duration int `json:"duration"` // длительность в секундах
 }
 
+// Extractor извлечение данных из ответа
+type Extractor struct {
+	Name     string `json:"name"`
+	JSONPath string `json:"json_path"`
+	Regex    string `json:"regex"`
+	Header   string `json:"header"`
+}
+
+// ScenarioStep шаг сценария
+type ScenarioStep struct {
+	Order      int               `json:"order"`
+	Name       string            `json:"name"`
+	URL        string            `json:"url"`
+	Method     string            `json:"method"`
+	Headers    map[string]string `json:"headers"`
+	Body       string            `json:"body"`
+	Extractors []Extractor       `json:"extractors,omitempty"`
+}
+
+// WeightedRequest запрос с весом для случайного выбора
+type WeightedRequest struct {
+	Name    string            `json:"name"`
+	URL     string            `json:"url"`
+	Method  string            `json:"method"`
+	Headers map[string]string `json:"headers"`
+	Body    string            `json:"body"`
+	Weight  int               `json:"weight"`
+}
+
 // TestConfig конфигурация нагрузочного теста
 type TestConfig struct {
-	ID          string            `json:"id" db:"id"`
-	Name        string            `json:"name" db:"name"`
-	URL         string            `json:"url" db:"url"`
-	Method      string            `json:"method" db:"method"`
-	Headers     map[string]string `json:"headers" db:"headers"`
-	Body        string            `json:"body" db:"body"`
-	BodyVariants []string         `json:"body_variants,omitempty" db:"body_variants"` // варианты тела запроса
-	RPS         int               `json:"rps" db:"rps"`         // базовый RPS (для обратной совместимости)
-	Duration    int               `json:"duration" db:"duration"` // общая длительность
-	RPSSteps    []RPSStep         `json:"rps_steps,omitempty" db:"rps_steps"` // динамические шаги RPS
-	TokenConfig *TokenConfig      `json:"token_config,omitempty" db:"token_config"`
-	CreatedAt   time.Time         `json:"created_at" db:"created_at"`
+	ID               string            `json:"id" db:"id"`
+	Name             string            `json:"name" db:"name"`
+	URL              string            `json:"url" db:"url"`
+	Method           string            `json:"method" db:"method"`
+	Headers          map[string]string `json:"headers" db:"headers"`
+	Body             string            `json:"body" db:"body"`
+	BodyVariants     []string          `json:"body_variants,omitempty" db:"body_variants"`
+	RPS              int               `json:"rps" db:"rps"`
+	Duration         int               `json:"duration" db:"duration"`
+	RPSSteps         []RPSStep         `json:"rps_steps,omitempty" db:"rps_steps"`
+	TokenConfig      *TokenConfig      `json:"token_config,omitempty" db:"token_config"`
+	IsSequential     bool              `json:"is_sequential" db:"is_sequential"`
+	Steps            []ScenarioStep    `json:"steps,omitempty" db:"steps"`
+	IsRandom         bool              `json:"is_random" db:"is_random"`
+	WeightedRequests []WeightedRequest `json:"weighted_requests,omitempty" db:"weighted_requests"`
+	CreatedAt        time.Time         `json:"created_at" db:"created_at"`
 }
 
 // TokenConfig конфигурация для получения токенов
