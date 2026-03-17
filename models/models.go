@@ -19,6 +19,22 @@ type Extractor struct {
 	Header   string `json:"header"`
 }
 
+// Assertion проверка ответа
+type Assertion struct {
+	Type     string `json:"type"`     // status_code, body_contains, body_json_path
+	Operator string `json:"operator"` // eq, neq, contains, gt, lt
+	Value    string `json:"value"`    // ожидаемое значение
+	JSONPath string `json:"json_path,omitempty"` // для body_json_path
+}
+
+// AutoStopConfig условия автоматической остановки теста
+type AutoStopConfig struct {
+	Enabled          bool    `json:"enabled"`
+	MaxErrorRate     float64 `json:"max_error_rate"`      // остановить если error rate > X%
+	MaxAvgResponseMs int64   `json:"max_avg_response_ms"` // остановить если avg response > X ms
+	CheckAfterSec    int     `json:"check_after_sec"`     // начать проверку после X секунд
+}
+
 // ScenarioStep шаг сценария
 type ScenarioStep struct {
 	Order      int               `json:"order"`
@@ -28,6 +44,7 @@ type ScenarioStep struct {
 	Headers    map[string]string `json:"headers"`
 	Body       string            `json:"body"`
 	Extractors []Extractor       `json:"extractors,omitempty"`
+	ThinkTime  int               `json:"think_time,omitempty"` // пауза после шага в мс
 }
 
 // WeightedRequest запрос с весом для случайного выбора
@@ -57,6 +74,9 @@ type TestConfig struct {
 	Steps            []ScenarioStep    `json:"steps,omitempty" db:"steps"`
 	IsRandom         bool              `json:"is_random" db:"is_random"`
 	WeightedRequests []WeightedRequest `json:"weighted_requests,omitempty" db:"weighted_requests"`
+	TimeoutMs        int               `json:"timeout_ms,omitempty" db:"timeout_ms"`       // request timeout в мс (0 = 30000)
+	Assertions       []Assertion       `json:"assertions,omitempty" db:"assertions"`        // проверки ответов
+	AutoStop         *AutoStopConfig   `json:"auto_stop,omitempty" db:"auto_stop"`          // авто-стоп
 	CreatedAt        time.Time         `json:"created_at" db:"created_at"`
 }
 
@@ -87,22 +107,27 @@ type TestResult struct {
 type TestSession struct {
 	ID        string    `json:"id" db:"id"`
 	TestID    string    `json:"test_id" db:"test_id"`
-	Status    string    `json:"status" db:"status"` // running, stopped, completed
+	Status    string    `json:"status" db:"status"` // running, stopped, completed, auto_stopped
 	StartedAt time.Time `json:"started_at" db:"started_at"`
 	EndedAt   *time.Time `json:"ended_at,omitempty" db:"ended_at"`
 }
 
 // MetricsSnapshot снимок метрик за секунду
 type MetricsSnapshot struct {
-	Timestamp    time.Time         `json:"timestamp"`
-	RPS          int               `json:"rps"`
-	AvgDuration  float64           `json:"avg_duration"`
-	P50Duration  float64           `json:"p50_duration"`
-	P95Duration  float64           `json:"p95_duration"`
-	P99Duration  float64           `json:"p99_duration"`
-	StatusCodes  map[int]int       `json:"status_codes"`
-	ErrorRate    float64           `json:"error_rate"`
-	LastError    string            `json:"last_error,omitempty"`
+	Timestamp      time.Time   `json:"timestamp"`
+	RPS            int         `json:"rps"`
+	Throughput     int         `json:"throughput"`
+	AvgDuration    float64     `json:"avg_duration"`
+	MinDuration    float64     `json:"min_duration"`
+	MaxDuration    float64     `json:"max_duration"`
+	P50Duration    float64     `json:"p50_duration"`
+	P95Duration    float64     `json:"p95_duration"`
+	P99Duration    float64     `json:"p99_duration"`
+	StatusCodes    map[int]int `json:"status_codes"`
+	ErrorRate      float64     `json:"error_rate"`
+	InFlight       int         `json:"in_flight"`
+	AssertionFails int         `json:"assertion_fails"`
+	LastError      string      `json:"last_error,omitempty"`
 }
 
 // WSMessage сообщение для WebSocket

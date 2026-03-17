@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,7 +25,7 @@ type LoadTestEngine struct {
 	metricsChan       chan models.MetricsSnapshot
 	sessions          map[string]*TestSession
 	mutex             sync.RWMutex
-	onSessionComplete func(sessionID string) // callback при завершении сессии
+	onSessionComplete func(sessionID string, status string) // callback при завершении сессии
 }
 
 type TestSession struct {
@@ -35,6 +36,7 @@ type TestSession struct {
 	Variables   map[string]string
 	VarMutex    sync.RWMutex
 	ResultsChan chan models.TestResult
+	InFlight    int64 // atomic counter для запросов "в полёте"
 }
 
 func NewLoadTestEngine() *LoadTestEngine {
@@ -87,9 +89,8 @@ func (lte *LoadTestEngine) StopTest(sessionID string) error {
 	session.Cancel()
 	session.IsActive = false
 	
-	// Вызываем callback при остановке
 	if lte.onSessionComplete != nil {
-		go lte.onSessionComplete(sessionID)
+		go lte.onSessionComplete(sessionID, "stopped")
 	}
 	
 	return nil
@@ -102,13 +103,19 @@ func (lte *LoadTestEngine) runTest(ctx context.Context, session *TestSession) {
 		lte.mutex.Unlock()
 		
 		if lte.onSessionComplete != nil {
-			lte.onSessionComplete(session.ID)
+			lte.onSessionComplete(session.ID, "completed")
 		}
 	}()
 
 	config := session.Config
+	
+	timeout := 30 * time.Second
+	if config.TimeoutMs > 0 {
+		timeout = time.Duration(config.TimeoutMs) * time.Millisecond
+	}
+	
 	client := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: timeout,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
@@ -237,6 +244,9 @@ func (lte *LoadTestEngine) updateSessionToken(session *TestSession) {
 }
 
 func (lte *LoadTestEngine) executeRequest(client *http.Client, session *TestSession) {
+	atomic.AddInt64(&session.InFlight, 1)
+	defer atomic.AddInt64(&session.InFlight, -1)
+
 	start := time.Now()
 	config := session.Config
 	result := models.TestResult{
@@ -245,7 +255,6 @@ func (lte *LoadTestEngine) executeRequest(client *http.Client, session *TestSess
 		Timestamp: start,
 	}
 
-	// Проверяем что сессия активна перед отправкой
 	lte.mutex.RLock()
 	isActive := session.IsActive
 	lte.mutex.RUnlock()
@@ -254,11 +263,9 @@ func (lte *LoadTestEngine) executeRequest(client *http.Client, session *TestSess
 		return
 	}
 
-	// Подготавливаем запрос
 	var body io.Reader
 	var bodyText string
 	
-	// Выбираем body: если есть варианты - случайный, иначе основной
 	if len(config.BodyVariants) > 0 {
 		bodyText = config.BodyVariants[rand.Intn(len(config.BodyVariants))]
 	} else if config.Body != "" {
@@ -268,7 +275,7 @@ func (lte *LoadTestEngine) executeRequest(client *http.Client, session *TestSess
 	if bodyText != "" {
 		processedBody := lte.replaceVariables(bodyText, session)
 		body = bytes.NewBufferString(processedBody)
-		result.RequestBody = processedBody // Сохраняем request body
+		result.RequestBody = processedBody
 	}
 
 	processedURL := lte.replaceVariables(config.URL, session)
@@ -279,13 +286,11 @@ func (lte *LoadTestEngine) executeRequest(client *http.Client, session *TestSess
 		return
 	}
 
-	// Устанавливаем заголовки с заменой переменных
 	for key, value := range config.Headers {
 		processedValue := lte.replaceVariables(value, session)
 		req.Header.Set(key, processedValue)
 	}
 
-	// Выполняем запрос
 	resp, err := client.Do(req)
 	if err != nil {
 		result.Error = err.Error()
@@ -296,31 +301,76 @@ func (lte *LoadTestEngine) executeRequest(client *http.Client, session *TestSess
 	}
 	defer resp.Body.Close()
 
-	// Читаем ответ
 	responseBody, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
 		result.Error = readErr.Error()
 	} else {
-		result.ResponseBody = string(responseBody) // Сохраняем response body
+		result.ResponseBody = string(responseBody)
 	}
 
 	result.StatusCode = resp.StatusCode
 	result.Duration = time.Since(start).Milliseconds()
+
+	// Проверяем assertions
+	if len(config.Assertions) > 0 && result.Error == "" {
+		if failMsg := lte.checkAssertions(config.Assertions, result); failMsg != "" {
+			result.Error = "ASSERTION: " + failMsg
+		}
+	}
+
 	lte.safeChannelSend(session, result)
 }
 
 func (lte *LoadTestEngine) safeChannelSend(session *TestSession, result models.TestResult) {
 	defer func() {
 		if r := recover(); r != nil {
-			// Канал закрыт, игнорируем
 		}
 	}()
 	
 	select {
 	case session.ResultsChan <- result:
 	default:
-		// Канал заполнен, пропускаем
 	}
+}
+
+func (lte *LoadTestEngine) checkAssertions(assertions []models.Assertion, result models.TestResult) string {
+	for _, a := range assertions {
+		switch a.Type {
+		case "status_code":
+			expected, _ := strconv.Atoi(a.Value)
+			switch a.Operator {
+			case "eq":
+				if result.StatusCode != expected {
+					return "status_code " + strconv.Itoa(result.StatusCode) + " != " + a.Value
+				}
+			case "neq":
+				if result.StatusCode == expected {
+					return "status_code == " + a.Value
+				}
+			}
+		case "body_contains":
+			contains := strings.Contains(result.ResponseBody, a.Value)
+			if a.Operator == "contains" && !contains {
+				return "body does not contain '" + a.Value + "'"
+			}
+			if a.Operator == "not_contains" && contains {
+				return "body contains '" + a.Value + "'"
+			}
+		case "body_json_path":
+			actual := lte.extractJSONPath(result.ResponseBody, a.JSONPath)
+			switch a.Operator {
+			case "eq":
+				if actual != a.Value {
+					return a.JSONPath + " = '" + actual + "' != '" + a.Value + "'"
+				}
+			case "contains":
+				if !strings.Contains(actual, a.Value) {
+					return a.JSONPath + " does not contain '" + a.Value + "'"
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func (lte *LoadTestEngine) replaceVariables(text string, session *TestSession) string {
@@ -470,6 +520,7 @@ func (lte *LoadTestEngine) collectMetrics(sessionID string) {
 	defer ticker.Stop()
 
 	results := make([]models.TestResult, 0)
+	startTime := time.Now()
 	
 	lte.mutex.RLock()
 	session, exists := lte.sessions[sessionID]
@@ -480,10 +531,8 @@ func (lte *LoadTestEngine) collectMetrics(sessionID string) {
 	}
 	
 	defer func() {
-		// Безопасно закрываем канал
 		defer func() {
 			if r := recover(); r != nil {
-				// Канал уже закрыт
 			}
 		}()
 		close(session.ResultsChan)
@@ -493,8 +542,26 @@ func (lte *LoadTestEngine) collectMetrics(sessionID string) {
 		select {
 		case <-ticker.C:
 			if len(results) > 0 {
-				snapshot := lte.calculateMetrics(results)
+				snapshot := lte.calculateMetrics(results, session)
 				lte.metricsChan <- snapshot
+				
+				// Auto-stop check
+				if lte.shouldAutoStop(session, snapshot, startTime) {
+					lte.mutex.Lock()
+					session.IsActive = false
+					session.Cancel()
+					lte.mutex.Unlock()
+					if lte.onSessionComplete != nil {
+						lte.onSessionComplete(sessionID, "auto_stopped")
+					}
+					// Отправляем WS сообщение об авто-стопе
+					lte.metricsChan <- models.MetricsSnapshot{
+						Timestamp: time.Now(),
+						LastError: "AUTO_STOP: " + lte.autoStopReason(session, snapshot),
+					}
+					return
+				}
+				
 				results = results[:0]
 			}
 
@@ -508,25 +575,52 @@ func (lte *LoadTestEngine) collectMetrics(sessionID string) {
 
 		case result, ok := <-session.ResultsChan:
 			if !ok {
-				return // Канал закрыт
+				return
 			}
 			results = append(results, result)
 			
-			// Пересылаем результат в главный канал для сохранения в БД
 			select {
 			case lte.resultsChan <- result:
 			default:
-				// Канал заполнен, пропускаем
 			}
 		}
 	}
 }
 
-func (lte *LoadTestEngine) calculateMetrics(results []models.TestResult) models.MetricsSnapshot {
+func (lte *LoadTestEngine) shouldAutoStop(session *TestSession, snapshot models.MetricsSnapshot, startTime time.Time) bool {
+	cfg := session.Config.AutoStop
+	if cfg == nil || !cfg.Enabled {
+		return false
+	}
+	if cfg.CheckAfterSec > 0 && time.Since(startTime).Seconds() < float64(cfg.CheckAfterSec) {
+		return false
+	}
+	if cfg.MaxErrorRate > 0 && snapshot.ErrorRate > cfg.MaxErrorRate {
+		return true
+	}
+	if cfg.MaxAvgResponseMs > 0 && snapshot.AvgDuration > float64(cfg.MaxAvgResponseMs) {
+		return true
+	}
+	return false
+}
+
+func (lte *LoadTestEngine) autoStopReason(session *TestSession, snapshot models.MetricsSnapshot) string {
+	cfg := session.Config.AutoStop
+	if cfg.MaxErrorRate > 0 && snapshot.ErrorRate > cfg.MaxErrorRate {
+		return "error rate " + strconv.FormatFloat(snapshot.ErrorRate, 'f', 1, 64) + "% > " + strconv.FormatFloat(cfg.MaxErrorRate, 'f', 1, 64) + "%"
+	}
+	if cfg.MaxAvgResponseMs > 0 && snapshot.AvgDuration > float64(cfg.MaxAvgResponseMs) {
+		return "avg response " + strconv.FormatFloat(snapshot.AvgDuration, 'f', 0, 64) + "ms > " + strconv.FormatInt(cfg.MaxAvgResponseMs, 10) + "ms"
+	}
+	return "unknown"
+}
+
+func (lte *LoadTestEngine) calculateMetrics(results []models.TestResult, session *TestSession) models.MetricsSnapshot {
 	snapshot := models.MetricsSnapshot{
 		Timestamp:   time.Now(),
 		RPS:         len(results),
 		StatusCodes: make(map[int]int),
+		InFlight:    int(atomic.LoadInt64(&session.InFlight)),
 	}
 
 	if len(results) == 0 {
@@ -535,27 +629,49 @@ func (lte *LoadTestEngine) calculateMetrics(results []models.TestResult) models.
 
 	var totalDuration int64
 	var errorCount int
+	var assertionFails int
 	var lastError string
+	var minDur, maxDur int64
+	var throughput int
 	durations := make([]int64, 0, len(results))
+
+	minDur = results[0].Duration
 
 	for _, result := range results {
 		totalDuration += result.Duration
 		durations = append(durations, result.Duration)
 		snapshot.StatusCodes[result.StatusCode]++
 		
+		if result.Duration < minDur {
+			minDur = result.Duration
+		}
+		if result.Duration > maxDur {
+			maxDur = result.Duration
+		}
+		
+		if result.StatusCode > 0 && result.StatusCode < 400 {
+			throughput++
+		}
+		
 		if result.Error != "" || result.StatusCode >= 400 {
 			errorCount++
 			if result.Error != "" {
+				if strings.HasPrefix(result.Error, "ASSERTION:") {
+					assertionFails++
+				}
 				lastError = result.Error
 			}
 		}
 	}
 
+	snapshot.Throughput = throughput
+	snapshot.MinDuration = float64(minDur)
+	snapshot.MaxDuration = float64(maxDur)
 	snapshot.AvgDuration = float64(totalDuration) / float64(len(results))
 	snapshot.ErrorRate = float64(errorCount) / float64(len(results)) * 100
+	snapshot.AssertionFails = assertionFails
 	snapshot.LastError = lastError
 
-	// Вычисляем перцентили
 	snapshot.P50Duration = lte.calculatePercentile(durations, 50)
 	snapshot.P95Duration = lte.calculatePercentile(durations, 95)
 	snapshot.P99Duration = lte.calculatePercentile(durations, 99)
@@ -598,7 +714,7 @@ func (lte *LoadTestEngine) GetMetricsChan() <-chan models.MetricsSnapshot {
 	return lte.metricsChan
 }
 
-func (lte *LoadTestEngine) SetOnSessionComplete(callback func(sessionID string)) {
+func (lte *LoadTestEngine) SetOnSessionComplete(callback func(sessionID string, status string)) {
 	lte.onSessionComplete = callback
 }
 
@@ -640,6 +756,11 @@ func (lte *LoadTestEngine) executeScenario(client *http.Client, session *TestSes
 
 		if result.Error != "" || result.StatusCode >= 400 {
 			return
+		}
+
+		// Think time между шагами
+		if step.ThinkTime > 0 {
+			time.Sleep(time.Duration(step.ThinkTime) * time.Millisecond)
 		}
 	}
 }
@@ -804,6 +925,9 @@ func (lte *LoadTestEngine) selectWeightedRequest(requests []models.WeightedReque
 }
 
 func (lte *LoadTestEngine) executeWeightedRequest(client *http.Client, session *TestSession, request models.WeightedRequest) {
+	atomic.AddInt64(&session.InFlight, 1)
+	defer atomic.AddInt64(&session.InFlight, -1)
+
 	start := time.Now()
 	result := models.TestResult{
 		ID:        uuid.New().String(),

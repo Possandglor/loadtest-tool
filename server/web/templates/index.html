@@ -175,6 +175,14 @@
             background: #dc3545;
         }
 
+        .status.completed {
+            background: #6c757d;
+        }
+
+        .status.auto_stopped {
+            background: #ff9800;
+        }
+
         .metrics-table {
             width: 100%;
             border-collapse: collapse;
@@ -426,6 +434,44 @@
                             </div>
                         </div>
 
+                        <!-- Request Timeout -->
+                        <div class="form-group">
+                            <label>Request Timeout (ms, 0 = 30000):</label>
+                            <input type="number" id="timeoutMs" min="0" value="0" placeholder="30000">
+                        </div>
+
+                        <!-- Assertions -->
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="useAssertions"> Use Response Assertions
+                            </label>
+                        </div>
+                        <div id="assertionsConfig" style="display: none; background: #3a3a3a; padding: 15px; border-radius: 5px; margin-top: 10px;">
+                            <div id="assertionsList"></div>
+                            <button type="button" class="btn-secondary btn-small" onclick="addAssertion()">+ Add Assertion</button>
+                        </div>
+
+                        <!-- Auto-Stop -->
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="useAutoStop"> Auto-Stop Conditions
+                            </label>
+                        </div>
+                        <div id="autoStopConfig" style="display: none; background: #3a3a3a; padding: 15px; border-radius: 5px; margin-top: 10px;">
+                            <div class="form-group">
+                                <label>Max Error Rate (%):</label>
+                                <input type="number" id="autoStopErrorRate" min="0" max="100" value="50" step="1">
+                            </div>
+                            <div class="form-group">
+                                <label>Max Avg Response Time (ms):</label>
+                                <input type="number" id="autoStopMaxResponse" min="0" value="5000">
+                            </div>
+                            <div class="form-group">
+                                <label>Start checking after (sec):</label>
+                                <input type="number" id="autoStopCheckAfter" min="0" value="10">
+                            </div>
+                        </div>
+
                         <button type="submit" class="btn-primary" id="saveBtn">💾 Save Configuration</button>
                         <button type="button" class="btn-secondary" id="cancelEditBtn" onclick="cancelEdit()"
                             style="display: none;">❌ Cancel Edit</button>
@@ -467,6 +513,12 @@
                 <div class="chart-container">
                     <canvas id="errorRateChart"></canvas>
                 </div>
+                <div class="chart-container">
+                    <canvas id="throughputChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <canvas id="inFlightChart"></canvas>
+                </div>
             </div>
 
 
@@ -478,7 +530,10 @@
                         <tr>
                             <th>Timestamp</th>
                             <th>RPS</th>
-                            <th>Avg Response Time (ms)</th>
+                            <th>Throughput</th>
+                            <th>In-Flight</th>
+                            <th>Avg (ms)</th>
+                            <th>Min/Max (ms)</th>
                             <th>Error Rate (%)</th>
                             <th>Status Codes</th>
                             <th>Last Error</th>
@@ -503,6 +558,10 @@
 
                 <div class="section">
                     <h2>📊 Session Details</h2>
+                    <div style="margin-bottom: 10px;">
+                        <button class="btn-secondary btn-small" onclick="compareSelectedSessions()" id="compareBtn" disabled>🔀 Compare Selected</button>
+                        <small style="color: #888; margin-left: 10px;">Hold Ctrl+Click to select multiple sessions</small>
+                    </div>
                     <div id="sessionDetails" style="color: #888;">
                         <p>No session selected</p>
                     </div>
@@ -548,10 +607,11 @@
         let ws;
         let currentSessionId = localStorage.getItem('currentSessionId') || null;
         let currentTestName = localStorage.getItem('currentTestName') || null;
-        let rpsChart, responseTimeChart, statusCodesChart, errorRateChart;
+        let rpsChart, responseTimeChart, statusCodesChart, errorRateChart, throughputChart, inFlightChart;
         let historyRpsChart, historyResponseTimeChart, historyStatusCodesChart;
         let editingConfigId = null;
         let selectedTestId = null;
+        let selectedSessionIds = new Set(); // для compare
 
         // Инициализация
         document.addEventListener('DOMContentLoaded', async function () {
@@ -575,6 +635,14 @@
                 document.getElementById('rpsStepsConfig').style.display = this.checked ? 'block' : 'none';
                 document.getElementById('testRps').disabled = this.checked;
                 document.getElementById('testDuration').disabled = this.checked;
+            });
+
+            document.getElementById('useAssertions').addEventListener('change', function () {
+                document.getElementById('assertionsConfig').style.display = this.checked ? 'block' : 'none';
+            });
+
+            document.getElementById('useAutoStop').addEventListener('change', function () {
+                document.getElementById('autoStopConfig').style.display = this.checked ? 'block' : 'none';
             });
 
             document.getElementById('configForm').addEventListener('submit', saveConfig);
@@ -669,6 +737,20 @@
                             borderColor: 'rgb(255, 99, 132)',
                             backgroundColor: 'rgba(255, 99, 132, 0.1)',
                             tension: 0.1
+                        },
+                        {
+                            label: 'Min',
+                            data: [],
+                            borderColor: 'rgba(76, 175, 80, 0.6)',
+                            borderDash: [5, 5],
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Max',
+                            data: [],
+                            borderColor: 'rgba(244, 67, 54, 0.6)',
+                            borderDash: [5, 5],
+                            tension: 0.1
                         }
                     ]
                 },
@@ -734,6 +816,50 @@
                             text: 'Error Rate Over Time'
                         }
                     }
+                }
+            });
+
+            const throughputCtx = document.getElementById('throughputChart').getContext('2d');
+            throughputChart = new Chart(throughputCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Throughput (successful/s)',
+                        data: [],
+                        borderColor: 'rgb(76, 175, 80)',
+                        backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                        tension: 0.1,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: { y: { beginAtZero: true } },
+                    plugins: { title: { display: true, text: 'Throughput (Successful Requests/s)' } }
+                }
+            });
+
+            const inFlightCtx = document.getElementById('inFlightChart').getContext('2d');
+            inFlightChart = new Chart(inFlightCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'In-Flight Requests',
+                        data: [],
+                        borderColor: 'rgb(156, 39, 176)',
+                        backgroundColor: 'rgba(156, 39, 176, 0.1)',
+                        tension: 0.1,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: { y: { beginAtZero: true } },
+                    plugins: { title: { display: true, text: 'Concurrent In-Flight Requests' } }
                 }
             });
         }
@@ -860,7 +986,6 @@
                     const sessionDiv = document.createElement('div');
                     sessionDiv.className = 'history-item';
                     sessionDiv.style.marginBottom = '10px';
-                    sessionDiv.onclick = () => loadSessionResults(session.id, testName);
 
                     const duration = session.ended_at 
                         ? Math.round((new Date(session.ended_at) - new Date(session.started_at)) / 1000)
@@ -869,10 +994,29 @@
                     sessionDiv.innerHTML = `
                         <strong>Session ${session.id.substring(0, 8)}</strong>
                         <span class="status ${session.status}">${session.status}</span>
-                        <button class="btn-danger btn-small" onclick="event.stopPropagation(); deleteSession('${session.id}')" style="float: right;">🗑️</button><br>
+                        <button class="btn-danger btn-small" onclick="event.stopPropagation(); deleteSession('${session.id}')" style="float: right;">🗑️</button>
+                        <button class="btn-secondary btn-small" onclick="event.stopPropagation(); exportSessionCSV('${session.id}')" style="float: right; margin-right: 5px;">📥 CSV</button><br>
                         <small style="color: #888;">Started: ${new Date(session.started_at).toLocaleString()}</small><br>
                         <small style="color: #666;">Duration: ${duration}s</small>
                     `;
+                    // Multi-select для compare
+                    sessionDiv.addEventListener('click', (e) => {
+                        if (e.ctrlKey || e.metaKey) {
+                            e.preventDefault();
+                            if (selectedSessionIds.has(session.id)) {
+                                selectedSessionIds.delete(session.id);
+                                sessionDiv.classList.remove('selected');
+                            } else {
+                                selectedSessionIds.add(session.id);
+                                sessionDiv.classList.add('selected');
+                            }
+                            document.getElementById('compareBtn').disabled = selectedSessionIds.size < 2;
+                        } else {
+                            selectedSessionIds.clear();
+                            document.querySelectorAll('#sessionsList .history-item').forEach(el => el.classList.remove('selected'));
+                            loadSessionResults(session.id, testName);
+                        }
+                    });
                     sessionsList.appendChild(sessionDiv);
                 });
 
@@ -1011,7 +1155,18 @@
         function updateMetrics(metrics) {
             const time = new Date(metrics.timestamp).toLocaleTimeString();
 
-            // Графики без лимита — показываем всё с начала сессии
+            // Проверяем auto-stop сообщение
+            if (metrics.last_error && metrics.last_error.startsWith('AUTO_STOP:')) {
+                alert('⚠️ Test auto-stopped: ' + metrics.last_error.replace('AUTO_STOP: ', ''));
+                currentSessionId = null;
+                currentTestName = null;
+                localStorage.removeItem('currentSessionId');
+                localStorage.removeItem('currentTestName');
+                document.getElementById('activeTestIndicator').style.display = 'none';
+                updateConfigButtons();
+                return;
+            }
+
             rpsChart.data.labels.push(time);
             rpsChart.data.datasets[0].data.push(metrics.rps);
             rpsChart.update('none');
@@ -1021,14 +1176,22 @@
             responseTimeChart.data.datasets[1].data.push(metrics.p50_duration);
             responseTimeChart.data.datasets[2].data.push(metrics.p95_duration);
             responseTimeChart.data.datasets[3].data.push(metrics.p99_duration);
+            responseTimeChart.data.datasets[4].data.push(metrics.min_duration);
+            responseTimeChart.data.datasets[5].data.push(metrics.max_duration);
             responseTimeChart.update('none');
 
-            // Обновляем график ошибок
             errorRateChart.data.labels.push(time);
             errorRateChart.data.datasets[0].data.push(metrics.error_rate);
             errorRateChart.update('none');
 
-            // Обновляем график статус кодов
+            throughputChart.data.labels.push(time);
+            throughputChart.data.datasets[0].data.push(metrics.throughput);
+            throughputChart.update('none');
+
+            inFlightChart.data.labels.push(time);
+            inFlightChart.data.datasets[0].data.push(metrics.in_flight);
+            inFlightChart.update('none');
+
             statusCodesChart.data.labels.push(time);
 
             // Создаем датасеты для каждого статус кода динамически с цветами
@@ -1078,7 +1241,10 @@
             row.innerHTML = `
                 <td>${time}</td>
                 <td>${metrics.rps}</td>
+                <td>${metrics.throughput}</td>
+                <td>${metrics.in_flight}</td>
                 <td>${metrics.avg_duration.toFixed(2)}</td>
+                <td>${metrics.min_duration.toFixed(0)} / ${metrics.max_duration.toFixed(0)}</td>
                 <td>${metrics.error_rate.toFixed(2)}</td>
                 <td>${JSON.stringify(metrics.status_codes)}</td>
                 <td style="color: red; max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${metrics.last_error || ''}</td>
@@ -1116,6 +1282,7 @@
                 <textarea placeholder='Headers JSON (supports &#123;&#123;variables&#125;&#125;): {"Authorization": "Bearer &#123;&#123;token&#125;&#125;"}' class="step-headers" style="width: 100%; margin: 5px 0;"></textarea>
                 <textarea placeholder='Body (supports &#123;&#123;variables&#125;&#125; and dynamic functions): &#123;&#123;randomJson:{"key":"val1"},{"key":"val2"}&#125;&#125;' class="step-body" style="width: 100%; margin: 5px 0;"></textarea>
                 <textarea placeholder='Extractors JSON: [{"name":"user_id","json_path":"$.data.id"}]' class="step-extractors" style="width: 100%; margin: 5px 0;"></textarea>
+                <input type="number" placeholder="Think Time after step (ms)" class="step-think-time" min="0" value="0" style="width: 100%; margin: 5px 0;">
                 <small style="color: #666;">Dynamic: &#123;&#123;random:a,b&#125;&#125;, &#123;&#123;randomInt:1,100&#125;&#125;, &#123;&#123;uuid&#125;&#125;, &#123;&#123;timestamp&#125;&#125;, &#123;&#123;randomString:10&#125;&#125;, &#123;&#123;randomEmail&#125;&#125;</small><br>
                 <button type="button" class="btn-danger btn-small" onclick="this.parentElement.remove()">Remove</button>
             `;
@@ -1171,7 +1338,8 @@
                         method: item.querySelector('.step-method').value,
                         headers: JSON.parse(item.querySelector('.step-headers').value || '{}'),
                         body: item.querySelector('.step-body').value,
-                        extractors: JSON.parse(item.querySelector('.step-extractors').value || '[]')
+                        extractors: JSON.parse(item.querySelector('.step-extractors').value || '[]'),
+                        think_time: parseInt(item.querySelector('.step-think-time').value) || 0
                     });
                 });
             } else if (testMode === 'random') {
@@ -1234,6 +1402,35 @@
                     token_path: document.getElementById('tokenPath').value,
                     header_name: document.getElementById('tokenHeaderName').value,
                     cache_ttl: parseInt(document.getElementById('tokenTtl').value)
+                };
+            }
+
+            // Timeout
+            const timeoutMs = parseInt(document.getElementById('timeoutMs').value) || 0;
+            if (timeoutMs > 0) {
+                config.timeout_ms = timeoutMs;
+            }
+
+            // Assertions
+            if (document.getElementById('useAssertions').checked) {
+                config.assertions = [];
+                document.querySelectorAll('.assertion-item').forEach(item => {
+                    config.assertions.push({
+                        type: item.querySelector('.assert-type').value,
+                        operator: item.querySelector('.assert-operator').value,
+                        value: item.querySelector('.assert-value').value,
+                        json_path: item.querySelector('.assert-jsonpath')?.value || ''
+                    });
+                });
+            }
+
+            // Auto-stop
+            if (document.getElementById('useAutoStop').checked) {
+                config.auto_stop = {
+                    enabled: true,
+                    max_error_rate: parseFloat(document.getElementById('autoStopErrorRate').value) || 0,
+                    max_avg_response_ms: parseInt(document.getElementById('autoStopMaxResponse').value) || 0,
+                    check_after_sec: parseInt(document.getElementById('autoStopCheckAfter').value) || 10
                 };
             }
 
@@ -1301,12 +1498,11 @@
         }
 
         function clearLiveCharts() {
-            [rpsChart, responseTimeChart, errorRateChart, statusCodesChart].forEach(chart => {
+            [rpsChart, responseTimeChart, errorRateChart, statusCodesChart, throughputChart, inFlightChart].forEach(chart => {
                 chart.data.labels = [];
                 chart.data.datasets.forEach(ds => { ds.data = []; });
                 chart.update();
             });
-            // Reset status codes datasets to empty (they are created dynamically)
             statusCodesChart.data.datasets = [];
             statusCodesChart.update();
             document.getElementById('metricsTable').innerHTML = '';
@@ -1548,6 +1744,37 @@
                 document.getElementById('saveBtn').textContent = 'Update Configuration';
                 document.getElementById('cancelEditBtn').style.display = 'inline-block';
 
+                // Timeout
+                document.getElementById('timeoutMs').value = config.timeout_ms || 0;
+
+                // Assertions
+                if (config.assertions && config.assertions.length > 0) {
+                    document.getElementById('useAssertions').checked = true;
+                    document.getElementById('assertionsConfig').style.display = 'block';
+                    document.getElementById('assertionsList').innerHTML = '';
+                    config.assertions.forEach(a => {
+                        addAssertion();
+                        const items = document.querySelectorAll('.assertion-item');
+                        const last = items[items.length - 1];
+                        last.querySelector('.assert-type').value = a.type;
+                        last.querySelector('.assert-operator').value = a.operator;
+                        last.querySelector('.assert-value').value = a.value;
+                        if (a.type === 'body_json_path') {
+                            last.querySelector('.assert-jsonpath').style.display = 'block';
+                            last.querySelector('.assert-jsonpath').value = a.json_path || '';
+                        }
+                    });
+                }
+
+                // Auto-stop
+                if (config.auto_stop && config.auto_stop.enabled) {
+                    document.getElementById('useAutoStop').checked = true;
+                    document.getElementById('autoStopConfig').style.display = 'block';
+                    document.getElementById('autoStopErrorRate').value = config.auto_stop.max_error_rate || 50;
+                    document.getElementById('autoStopMaxResponse').value = config.auto_stop.max_avg_response_ms || 5000;
+                    document.getElementById('autoStopCheckAfter').value = config.auto_stop.check_after_sec || 10;
+                }
+
             } catch (error) {
                 console.error('Error loading config:', error);
             }
@@ -1613,11 +1840,100 @@
             }
         }
 
+        function addAssertion() {
+            const list = document.getElementById('assertionsList');
+            const div = document.createElement('div');
+            div.className = 'assertion-item';
+            div.style.cssText = 'display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap;';
+            div.innerHTML = `
+                <select class="assert-type" style="width: 150px;" onchange="toggleAssertJsonPath(this)">
+                    <option value="status_code">Status Code</option>
+                    <option value="body_contains">Body Contains</option>
+                    <option value="body_json_path">Body JSON Path</option>
+                </select>
+                <input type="text" class="assert-jsonpath" placeholder="$.data.status" style="width: 150px; display: none;">
+                <select class="assert-operator" style="width: 120px;">
+                    <option value="eq">equals</option>
+                    <option value="neq">not equals</option>
+                    <option value="contains">contains</option>
+                    <option value="not_contains">not contains</option>
+                </select>
+                <input type="text" class="assert-value" placeholder="200" style="width: 150px;">
+                <button type="button" class="btn-danger btn-small" onclick="this.parentElement.remove()">✕</button>
+            `;
+            list.appendChild(div);
+        }
+
+        function toggleAssertJsonPath(select) {
+            const jp = select.parentElement.querySelector('.assert-jsonpath');
+            jp.style.display = select.value === 'body_json_path' ? 'block' : 'none';
+        }
+
+        async function exportSessionCSV(sessionId) {
+            window.open(`/api/session-results/${sessionId}/csv`, '_blank');
+        }
+
+        async function compareSelectedSessions() {
+            if (selectedSessionIds.size < 2) {
+                alert('Select at least 2 sessions (Ctrl+Click)');
+                return;
+            }
+            try {
+                const ids = Array.from(selectedSessionIds).join(',');
+                const response = await fetch(`/api/compare-sessions?ids=${ids}`);
+                const data = await response.json();
+
+                const details = document.getElementById('sessionDetails');
+                let html = '<h3>🔀 Session Comparison</h3><table class="metrics-table"><thead><tr><th>Metric</th>';
+                data.forEach(s => { html += `<th>Session ${s.session_id.substring(0, 8)}</th>`; });
+                html += '</tr></thead><tbody>';
+
+                const rows = [
+                    ['Total Requests', d => d.total_requests],
+                    ['Duration (sec)', d => d.duration_sec.toFixed(1)],
+                    ['Throughput (req/s)', d => d.throughput.toFixed(2)],
+                    ['Avg Response (ms)', d => d.avg_duration.toFixed(2)],
+                    ['Min Response (ms)', d => d.min_duration],
+                    ['Max Response (ms)', d => d.max_duration],
+                    ['P50 (ms)', d => d.p50_duration.toFixed(2)],
+                    ['P95 (ms)', d => d.p95_duration.toFixed(2)],
+                    ['P99 (ms)', d => d.p99_duration.toFixed(2)],
+                    ['Error Rate (%)', d => d.error_rate.toFixed(2)],
+                ];
+
+                rows.forEach(([label, fn]) => {
+                    html += `<tr><td><strong>${label}</strong></td>`;
+                    const values = data.map(fn);
+                    data.forEach((d, i) => {
+                        let style = '';
+                        if (values.length === 2) {
+                            const isLower = parseFloat(values[i]) < parseFloat(values[1 - i]);
+                            if (label.includes('Error') || label.includes('Response') || label === 'Max Response (ms)') {
+                                style = isLower ? 'color: #4caf50;' : 'color: #f44336;';
+                            } else if (label === 'Throughput (req/s)') {
+                                style = isLower ? 'color: #f44336;' : 'color: #4caf50;';
+                            }
+                        }
+                        html += `<td style="${style}">${fn(d)}</td>`;
+                    });
+                    html += '</tr>';
+                });
+
+                html += '</tbody></table>';
+                details.innerHTML = html;
+            } catch (error) {
+                alert('Error comparing sessions: ' + error.message);
+            }
+        }
+
         function cancelEdit() {
             editingConfigId = null;
             document.getElementById('configForm').reset();
             document.getElementById('tokenConfig').style.display = 'none';
             document.getElementById('rpsStepsConfig').style.display = 'none';
+            document.getElementById('assertionsConfig').style.display = 'none';
+            document.getElementById('autoStopConfig').style.display = 'none';
+            document.getElementById('assertionsList').innerHTML = '';
             document.getElementById('testRps').disabled = false;
             document.getElementById('testDuration').disabled = false;
             document.getElementById('saveBtn').textContent = 'Save Configuration';

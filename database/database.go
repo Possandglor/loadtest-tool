@@ -69,6 +69,9 @@ func (db *DB) migrate() error {
 		`ALTER TABLE test_configs ADD COLUMN steps TEXT`,
 		`ALTER TABLE test_configs ADD COLUMN is_random BOOLEAN DEFAULT 0`,
 		`ALTER TABLE test_configs ADD COLUMN weighted_requests TEXT`,
+		`ALTER TABLE test_configs ADD COLUMN timeout_ms INTEGER DEFAULT 0`,
+		`ALTER TABLE test_configs ADD COLUMN assertions TEXT`,
+		`ALTER TABLE test_configs ADD COLUMN auto_stop TEXT`,
 	}
 
 	for _, query := range queries {
@@ -89,16 +92,19 @@ func (db *DB) SaveTestConfig(config *models.TestConfig) error {
 	bodyVariants, _ := json.Marshal(config.BodyVariants)
 	steps, _ := json.Marshal(config.Steps)
 	weightedRequests, _ := json.Marshal(config.WeightedRequests)
+	assertions, _ := json.Marshal(config.Assertions)
+	autoStop, _ := json.Marshal(config.AutoStop)
 
 	_, err := db.conn.Exec(`
 		INSERT OR REPLACE INTO test_configs 
 		(id, name, url, method, headers, body, body_variants, rps, duration, rps_steps, token_config, 
-		 is_sequential, steps, is_random, weighted_requests, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 is_sequential, steps, is_random, weighted_requests, timeout_ms, assertions, auto_stop, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		config.ID, config.Name, config.URL, config.Method,
 		string(headers), config.Body, string(bodyVariants), config.RPS, config.Duration,
 		string(rpsSteps), string(tokenConfig), config.IsSequential, string(steps),
-		config.IsRandom, string(weightedRequests), config.CreatedAt)
+		config.IsRandom, string(weightedRequests), config.TimeoutMs,
+		string(assertions), string(autoStop), config.CreatedAt)
 
 	return err
 }
@@ -114,6 +120,9 @@ func (db *DB) GetTestConfigs() ([]models.TestConfig, error) {
 		       COALESCE(steps, '') as steps,
 		       COALESCE(is_random, 0) as is_random,
 		       COALESCE(weighted_requests, '') as weighted_requests,
+		       COALESCE(timeout_ms, 0) as timeout_ms,
+		       COALESCE(assertions, '') as assertions,
+		       COALESCE(auto_stop, '') as auto_stop,
 		       created_at 
 		FROM test_configs ORDER BY created_at DESC`)
 	if err != nil {
@@ -124,12 +133,13 @@ func (db *DB) GetTestConfigs() ([]models.TestConfig, error) {
 	var configs []models.TestConfig
 	for rows.Next() {
 		var config models.TestConfig
-		var headersJSON, bodyVariantsJSON, tokenConfigJSON, rpsStepsJSON, stepsJSON, weightedRequestsJSON string
+		var headersJSON, bodyVariantsJSON, tokenConfigJSON, rpsStepsJSON, stepsJSON, weightedRequestsJSON, assertionsJSON, autoStopJSON string
 
 		err := rows.Scan(&config.ID, &config.Name, &config.URL, &config.Method,
 			&headersJSON, &config.Body, &bodyVariantsJSON, &config.RPS, &config.Duration,
 			&rpsStepsJSON, &tokenConfigJSON, &config.IsSequential, &stepsJSON,
-			&config.IsRandom, &weightedRequestsJSON, &config.CreatedAt)
+			&config.IsRandom, &weightedRequestsJSON, &config.TimeoutMs,
+			&assertionsJSON, &autoStopJSON, &config.CreatedAt)
 		if err != nil {
 			continue
 		}
@@ -149,6 +159,12 @@ func (db *DB) GetTestConfigs() ([]models.TestConfig, error) {
 		}
 		if weightedRequestsJSON != "" {
 			json.Unmarshal([]byte(weightedRequestsJSON), &config.WeightedRequests)
+		}
+		if assertionsJSON != "" {
+			json.Unmarshal([]byte(assertionsJSON), &config.Assertions)
+		}
+		if autoStopJSON != "" {
+			json.Unmarshal([]byte(autoStopJSON), &config.AutoStop)
 		}
 
 		configs = append(configs, config)
@@ -206,16 +222,20 @@ func (db *DB) GetTestConfig(id string) (*models.TestConfig, error) {
 		       COALESCE(steps, '') as steps,
 		       COALESCE(is_random, 0) as is_random,
 		       COALESCE(weighted_requests, '') as weighted_requests,
+		       COALESCE(timeout_ms, 0) as timeout_ms,
+		       COALESCE(assertions, '') as assertions,
+		       COALESCE(auto_stop, '') as auto_stop,
 		       created_at 
 		FROM test_configs WHERE id = ?`, id)
 	
 	var config models.TestConfig
-	var headersJSON, tokenConfigJSON, rpsStepsJSON, stepsJSON, weightedRequestsJSON string
+	var headersJSON, tokenConfigJSON, rpsStepsJSON, stepsJSON, weightedRequestsJSON, assertionsJSON, autoStopJSON string
 
 	err := row.Scan(&config.ID, &config.Name, &config.URL, &config.Method,
 		&headersJSON, &config.Body, &config.RPS, &config.Duration,
 		&rpsStepsJSON, &tokenConfigJSON, &config.IsSequential, &stepsJSON,
-		&config.IsRandom, &weightedRequestsJSON, &config.CreatedAt)
+		&config.IsRandom, &weightedRequestsJSON, &config.TimeoutMs,
+		&assertionsJSON, &autoStopJSON, &config.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -232,6 +252,12 @@ func (db *DB) GetTestConfig(id string) (*models.TestConfig, error) {
 	}
 	if weightedRequestsJSON != "" {
 		json.Unmarshal([]byte(weightedRequestsJSON), &config.WeightedRequests)
+	}
+	if assertionsJSON != "" {
+		json.Unmarshal([]byte(assertionsJSON), &config.Assertions)
+	}
+	if autoStopJSON != "" {
+		json.Unmarshal([]byte(autoStopJSON), &config.AutoStop)
 	}
 
 	return &config, nil
