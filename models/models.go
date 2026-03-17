@@ -6,8 +6,9 @@ import (
 
 // RPSStep шаг изменения RPS
 type RPSStep struct {
-	RPS      int `json:"rps"`      // количество запросов в секунду
-	Duration int `json:"duration"` // длительность в секундах
+	RPS      int `json:"rps"`       // начальное количество запросов в секунду
+	RPSEnd   int `json:"rps_end"`   // конечное количество запросов в секунду (0 = равно RPS)
+	Duration int `json:"duration"`  // длительность в секундах
 }
 
 // Extractor извлечение данных из ответа

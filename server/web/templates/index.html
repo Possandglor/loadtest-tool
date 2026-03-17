@@ -369,10 +369,13 @@
                             </label>
                         </div>
                         <div id="rpsStepsConfig" class="rps-steps" style="display: none;">
-                            <label>RPS Steps (RPS, Duration in seconds):</label>
+                            <label>RPS Steps (Start RPS → End RPS, Duration in seconds):</label>
+                            <small style="color: #666; display: block; margin-bottom: 10px;">Set same Start and End for constant RPS. Different values = smooth ramp.</small>
                             <div id="rpsStepsList">
                                 <div class="rps-step">
-                                    <input type="number" placeholder="RPS" min="1" class="rps-value">
+                                    <input type="number" placeholder="Start RPS" min="1" class="rps-value">
+                                    <span style="color: #888;">→</span>
+                                    <input type="number" placeholder="End RPS" min="1" class="rps-end-value">
                                     <input type="number" placeholder="Duration (sec)" min="1" class="rps-duration">
                                     <button type="button" class="btn-danger btn-small"
                                         onclick="removeRPSStep(this)">Remove</button>
@@ -492,6 +495,7 @@
             <div class="main-grid">
                 <div class="section">
                     <h2>📋 Test Sessions</h2>
+                    <button class="btn-danger btn-small" onclick="clearAllSessions()" style="float: right; margin-top: -35px;">🗑️ Clear All Sessions</button>
                     <div id="historyList" class="history-list">
                         <p style="color: #888;">Select a test configuration to view its history...</p>
                     </div>
@@ -847,6 +851,7 @@
                 details.innerHTML = `
                     <h3>${testName}</h3>
                     <p style="color: #888;">Select a session to view details:</p>
+                    <button class="btn-danger btn-small" onclick="clearAllSessions('${testId}')" style="margin-bottom: 10px;">🗑️ Clear Sessions for This Test</button>
                     <div id="sessionsList"></div>
                 `;
 
@@ -863,7 +868,8 @@
 
                     sessionDiv.innerHTML = `
                         <strong>Session ${session.id.substring(0, 8)}</strong>
-                        <span class="status ${session.status}">${session.status}</span><br>
+                        <span class="status ${session.status}">${session.status}</span>
+                        <button class="btn-danger btn-small" onclick="event.stopPropagation(); deleteSession('${session.id}')" style="float: right;">🗑️</button><br>
                         <small style="color: #888;">Started: ${new Date(session.started_at).toLocaleString()}</small><br>
                         <small style="color: #666;">Duration: ${duration}s</small>
                     `;
@@ -1005,16 +1011,7 @@
         function updateMetrics(metrics) {
             const time = new Date(metrics.timestamp).toLocaleTimeString();
 
-            // Обновляем графики
-            if (rpsChart.data.labels.length > 30) {
-                rpsChart.data.labels.shift();
-                rpsChart.data.datasets[0].data.shift();
-                responseTimeChart.data.labels.shift();
-                responseTimeChart.data.datasets.forEach(ds => ds.data.shift());
-                errorRateChart.data.labels.shift();
-                errorRateChart.data.datasets[0].data.shift();
-            }
-
+            // Графики без лимита — показываем всё с начала сессии
             rpsChart.data.labels.push(time);
             rpsChart.data.datasets[0].data.push(metrics.rps);
             rpsChart.update('none');
@@ -1032,13 +1029,6 @@
             errorRateChart.update('none');
 
             // Обновляем график статус кодов
-            if (statusCodesChart.data.labels.length > 30) {
-                statusCodesChart.data.labels.shift();
-                statusCodesChart.data.datasets.forEach(dataset => {
-                    dataset.data.shift();
-                });
-            }
-
             statusCodesChart.data.labels.push(time);
 
             // Создаем датасеты для каждого статус кода динамически с цветами
@@ -1222,6 +1212,7 @@
                     if (rpsValue && durationValue) {
                         steps.push({
                             rps: parseInt(rpsValue),
+                            rps_end: parseInt(stepEl.querySelector('.rps-end-value').value) || parseInt(rpsValue),
                             duration: parseInt(durationValue)
                         });
                     }
@@ -1282,19 +1273,21 @@
                     if (config.is_random) modeInfo = `Random (${config.weighted_requests?.length || 0} requests)`;
 
                     const rpsInfo = config.rps_steps && config.rps_steps.length > 0
-                        ? `Dynamic RPS (${config.rps_steps.length} steps)`
+                        ? `Dynamic RPS (${config.rps_steps.map(s => s.rps === (s.rps_end || s.rps) ? s.rps : s.rps + '→' + s.rps_end).join(', ')})`
                         : `RPS: ${config.rps}`;
 
                     div.innerHTML = `
                         <div class="config-actions">
                             <button class="btn-secondary btn-small" onclick="editConfig('${config.id}')">Edit</button>
+                            <button class="btn-secondary btn-small" onclick="copyConfig('${config.id}')">Copy</button>
+                            <button class="btn-danger btn-small" onclick="deleteConfig('${config.id}', '${config.name.replace(/'/g, "\\'")}')">Delete</button>
                         </div>
                         <strong>${config.name}</strong> - ${modeInfo}<br>
                         ${config.method} ${config.url}<br>
                         ${rpsInfo}, Duration: ${config.duration}s
                         <div style="margin-top: 10px;">
                             <button class="btn-success" onclick="startTest('${config.id}')">Start</button>
-                            <button class="btn-danger" onclick="stopTest()">Stop</button>
+                            <button class="btn-danger btn-stop" onclick="stopTest()">Stop</button>
                         </div>
                     `;
                     list.appendChild(div);
@@ -1305,6 +1298,18 @@
             } catch (error) {
                 console.error('Error loading configs:', error);
             }
+        }
+
+        function clearLiveCharts() {
+            [rpsChart, responseTimeChart, errorRateChart, statusCodesChart].forEach(chart => {
+                chart.data.labels = [];
+                chart.data.datasets.forEach(ds => { ds.data = []; });
+                chart.update();
+            });
+            // Reset status codes datasets to empty (they are created dynamically)
+            statusCodesChart.data.datasets = [];
+            statusCodesChart.update();
+            document.getElementById('metricsTable').innerHTML = '';
         }
 
         async function startTest(configId) {
@@ -1320,6 +1325,9 @@
                 const result = await startResponse.json();
                 currentSessionId = result.session_id;
                 currentTestName = config ? config.name : 'Unknown Test';
+
+                // Очищаем графики для новой сессии
+                clearLiveCharts();
 
                 // Сохраняем в localStorage
                 localStorage.setItem('currentSessionId', currentSessionId);
@@ -1400,7 +1408,7 @@
             const configItems = document.querySelectorAll('.config-item');
             configItems.forEach(item => {
                 const startBtn = item.querySelector('.btn-success');
-                const stopBtn = item.querySelector('.btn-danger');
+                const stopBtn = item.querySelector('.btn-stop');
 
                 if (currentSessionId) {
                     startBtn.disabled = true;
@@ -1457,7 +1465,9 @@
             const stepDiv = document.createElement('div');
             stepDiv.className = 'rps-step';
             stepDiv.innerHTML = `
-                <input type="number" placeholder="RPS" min="1" class="rps-value">
+                <input type="number" placeholder="Start RPS" min="1" class="rps-value">
+                <span style="color: #888;">→</span>
+                <input type="number" placeholder="End RPS" min="1" class="rps-end-value">
                 <input type="number" placeholder="Duration (sec)" min="1" class="rps-duration">
                 <button type="button" class="btn-danger btn-small" onclick="removeRPSStep(this)">Remove</button>
             `;
@@ -1524,7 +1534,9 @@
                         const stepDiv = document.createElement('div');
                         stepDiv.className = 'rps-step';
                         stepDiv.innerHTML = `
-                            <input type="number" placeholder="RPS" min="1" class="rps-value" value="${step.rps}">
+                            <input type="number" placeholder="Start RPS" min="1" class="rps-value" value="${step.rps}">
+                            <span style="color: #888;">→</span>
+                            <input type="number" placeholder="End RPS" min="1" class="rps-end-value" value="${step.rps_end || step.rps}">
                             <input type="number" placeholder="Duration (sec)" min="1" class="rps-duration" value="${step.duration}">
                             <button type="button" class="btn-danger btn-small" onclick="removeRPSStep(this)">Remove</button>
                         `;
@@ -1538,6 +1550,66 @@
 
             } catch (error) {
                 console.error('Error loading config:', error);
+            }
+        }
+
+        async function copyConfig(configId) {
+            try {
+                const response = await fetch(`/api/configs/${configId}`);
+                const config = await response.json();
+                
+                config.name = config.name + ' (Copy)';
+                delete config.id;
+                delete config.created_at;
+                
+                const saveResponse = await fetch('/api/configs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                
+                if (saveResponse.ok) {
+                    loadConfigs();
+                }
+            } catch (error) {
+                alert('Error copying config: ' + error.message);
+            }
+        }
+
+        async function deleteConfig(configId, configName) {
+            if (!confirm(`Delete configuration "${configName}" and all its sessions/results?`)) return;
+            try {
+                await fetch(`/api/configs/${configId}`, { method: 'DELETE' });
+                loadConfigs();
+                loadTestHistory();
+            } catch (error) {
+                alert('Error deleting config: ' + error.message);
+            }
+        }
+
+        async function deleteSession(sessionId) {
+            if (!confirm('Delete this session?')) return;
+            try {
+                await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' });
+                if (selectedTestId) {
+                    // Reload sessions for current test
+                    document.querySelector('.history-item.selected')?.click();
+                }
+            } catch (error) {
+                alert('Error deleting session: ' + error.message);
+            }
+        }
+
+        async function clearAllSessions(testId) {
+            const scope = testId ? 'this test' : 'all tests';
+            if (!confirm(`Clear all completed/stopped sessions for ${scope}?`)) return;
+            try {
+                const url = testId ? `/api/sessions?test_id=${testId}` : '/api/sessions';
+                await fetch(url, { method: 'DELETE' });
+                loadTestHistory();
+                document.getElementById('sessionDetails').innerHTML = '<p style="color: #888;">No session selected</p>';
+            } catch (error) {
+                alert('Error clearing sessions: ' + error.message);
             }
         }
 

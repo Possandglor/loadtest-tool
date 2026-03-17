@@ -237,6 +237,36 @@ func (db *DB) GetTestConfig(id string) (*models.TestConfig, error) {
 	return &config, nil
 }
 
+func (db *DB) DeleteTestConfig(id string) error {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	tx.Exec(`DELETE FROM test_results WHERE test_id = ?`, id)
+	tx.Exec(`DELETE FROM test_sessions WHERE test_id = ?`, id)
+	_, err = tx.Exec(`DELETE FROM test_configs WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (db *DB) DeleteTestSession(sessionID string) error {
+	_, err := db.conn.Exec(`DELETE FROM test_sessions WHERE id = ?`, sessionID)
+	return err
+}
+
+func (db *DB) DeleteAllSessions(testID string) error {
+	if testID != "" {
+		_, err := db.conn.Exec(`DELETE FROM test_sessions WHERE test_id = ? AND status != 'running'`, testID)
+		return err
+	}
+	_, err := db.conn.Exec(`DELETE FROM test_sessions WHERE status != 'running'`)
+	return err
+}
+
 func (db *DB) Close() error {
 	return db.conn.Close()
 }

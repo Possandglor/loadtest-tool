@@ -140,6 +140,8 @@ func (s *Server) SetupRoutes() *gin.Engine {
 		api.GET("/sessions/:testId", s.getSessions)
 		api.GET("/results/:testId", s.getResults)
 		api.GET("/session-results/:sessionId", s.getSessionResults)
+		api.DELETE("/sessions/:id", s.deleteSession)
+		api.DELETE("/sessions", s.deleteAllSessions)
 		api.POST("/export", s.exportConfigs)
 		api.POST("/import", s.importConfigs)
 	}
@@ -204,7 +206,11 @@ func (s *Server) updateConfig(c *gin.Context) {
 }
 
 func (s *Server) deleteConfig(c *gin.Context) {
-	// TODO: Implement delete
+	configID := c.Param("id")
+	if err := s.db.DeleteTestConfig(configID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
 }
 
@@ -336,6 +342,24 @@ func (s *Server) getSessionResults(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, sessionResults)
+}
+
+func (s *Server) deleteSession(c *gin.Context) {
+	sessionID := c.Param("id")
+	if err := s.db.DeleteTestSession(sessionID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+}
+
+func (s *Server) deleteAllSessions(c *gin.Context) {
+	testID := c.Query("test_id")
+	if err := s.db.DeleteAllSessions(testID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
 }
 
 func (s *Server) exportConfigs(c *gin.Context) {

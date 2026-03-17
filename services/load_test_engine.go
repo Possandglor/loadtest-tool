@@ -127,18 +127,59 @@ func (lte *LoadTestEngine) runTest(ctx context.Context, session *TestSession) {
 
 func (lte *LoadTestEngine) runDynamicRPSTest(ctx context.Context, session *TestSession, client *http.Client) {
 	for _, step := range session.Config.RPSSteps {
-		stepCtx, stepCancel := context.WithTimeout(ctx, time.Duration(step.Duration)*time.Second)
-		
-		// Запускаем тест с текущим RPS
-		go lte.runStaticRPSTest(stepCtx, session, client, step.RPS)
-		
-		// Ждем завершения шага или отмены
+		rpsStart := step.RPS
+		rpsEnd := step.RPSEnd
+		if rpsEnd <= 0 {
+			rpsEnd = rpsStart
+		}
+
+		stepDuration := time.Duration(step.Duration) * time.Second
+		stepCtx, stepCancel := context.WithTimeout(ctx, stepDuration)
+
+		if rpsStart == rpsEnd {
+			go lte.runStaticRPSTest(stepCtx, session, client, rpsStart)
+		} else {
+			go lte.runRampRPSTest(stepCtx, session, client, rpsStart, rpsEnd, stepDuration)
+		}
+
 		select {
 		case <-stepCtx.Done():
 			stepCancel()
 		case <-ctx.Done():
 			stepCancel()
 			return
+		}
+	}
+}
+
+func (lte *LoadTestEngine) runRampRPSTest(ctx context.Context, session *TestSession, client *http.Client, rpsStart, rpsEnd int, duration time.Duration) {
+	startTime := time.Now()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		elapsed := time.Since(startTime)
+		progress := float64(elapsed) / float64(duration)
+		if progress > 1 {
+			progress = 1
+		}
+
+		currentRPS := float64(rpsStart) + (float64(rpsEnd)-float64(rpsStart))*progress
+		if currentRPS < 1 {
+			currentRPS = 1
+		}
+
+		interval := time.Second / time.Duration(currentRPS)
+		go lte.executeRequest(client, session)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
 		}
 	}
 }
